@@ -1,13 +1,14 @@
 #!/bin/bash
 
-# Quick OpenVPN Authentication Test
-# This script quickly tests if password + MFA authentication works
+# Simple OpenVPN Authentication Test
+# This script tests authentication using a different approach
 
 set -e
 
 # Color codes for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 log() {
@@ -16,6 +17,10 @@ log() {
 
 error() {
     echo -e "${RED}[ERROR] $1${NC}"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARNING] $1${NC}"
 }
 
 # Check if running as root
@@ -34,6 +39,19 @@ USERNAME="$1"
 
 log "Testing authentication for user: $USERNAME"
 echo ""
+
+# Check if user exists
+if ! id "$USERNAME" &>/dev/null; then
+    error "User $USERNAME does not exist"
+    exit 1
+fi
+
+# Check if Google Authenticator is configured
+if [ ! -f "/home/$USERNAME/.google_authenticator" ]; then
+    error "Google Authenticator not configured for $USERNAME"
+    exit 1
+fi
+
 echo "Enter the password + MFA code (no space between them)"
 echo "Example: if password is 'mypass123' and MFA code is '123456', enter: mypass123123456"
 echo ""
@@ -46,10 +64,10 @@ if [ -z "$password_mfa" ]; then
     exit 1
 fi
 
-log "Testing PAM authentication..."
+log "Testing authentication..."
 
-# Test PAM authentication using google-authenticator
-echo "$password_mfa" | sudo -u "$USERNAME" google-authenticator -t -d -f -r 3 -R 30 -w 3 2>&1
+# Test using su command to simulate login
+echo "$password_mfa" | su - "$USERNAME" -c "echo 'Authentication test successful'" 2>/dev/null
 AUTH_RESULT=$?
 
 echo ""

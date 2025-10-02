@@ -70,9 +70,6 @@ log "Allowing NTP..."
 ufw allow out 123/udp
 ufw allow in 123/udp
 
-# Allow ping (ICMP)
-log "Allowing ping..."
-ufw allow in on any from any to any proto icmp
 
 # Allow all outbound traffic
 log "Allowing all outbound traffic..."

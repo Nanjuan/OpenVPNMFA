@@ -75,16 +75,38 @@ EOF
 # Initialize PKI
 log "Initializing PKI..."
 source vars
-./clean-all
-./build-ca --batch
+
+# Check Easy-RSA version and use appropriate command
+if [ -f "./clean-all" ]; then
+    ./clean-all
+elif [ -f "./clean" ]; then
+    ./clean
+else
+    # For newer versions, use easyrsa directly
+    ./easyrsa clean
+fi
+
+if [ -f "./build-ca" ]; then
+    ./build-ca --batch
+else
+    ./easyrsa build-ca nopass
+fi
 
 # Generate server certificate and key
 log "Generating server certificate..."
-./build-key-server --batch server
+if [ -f "./build-key-server" ]; then
+    ./build-key-server --batch server
+else
+    ./easyrsa build-server-full server nopass
+fi
 
 # Generate Diffie-Hellman parameters
 log "Generating Diffie-Hellman parameters..."
-./build-dh
+if [ -f "./build-dh" ]; then
+    ./build-dh
+else
+    ./easyrsa gen-dh
+fi
 
 # Generate TLS-auth key
 log "Generating TLS-auth key..."

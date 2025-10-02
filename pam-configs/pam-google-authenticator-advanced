@@ -1,0 +1,35 @@
+# Advanced PAM configuration for Google Authenticator with OpenVPN
+# This configuration provides enhanced security and logging
+
+# Authentication with Google Authenticator
+# forward_pass: Allows the password to be passed to subsequent modules
+# nullok: Allows users without MFA to still authenticate (remove for mandatory MFA)
+# no_increment_hotp: Prevents HOTP counter increment on failed attempts
+auth required pam_google_authenticator.so forward_pass nullok no_increment_hotp
+
+# Standard Unix authentication
+# use_first_pass: Uses the password from the first module
+# try_first_pass: Tries the password from the first module, then prompts if needed
+auth required pam_unix.so use_first_pass
+
+# Account validation
+account required pam_unix.so
+
+# Session management
+session required pam_unix.so
+
+# Password management
+password required pam_unix.so
+
+# Additional security modules (optional)
+# Uncomment the following lines for enhanced security:
+
+# Rate limiting to prevent brute force attacks
+# auth required pam_tally2.so deny=5 onerr=fail unlock_time=1800
+
+# Time-based access control
+# account required pam_time.so
+
+# Logging for audit purposes
+# session required pam_loginuid.so
+

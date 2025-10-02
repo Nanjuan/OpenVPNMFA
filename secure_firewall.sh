@@ -55,7 +55,7 @@ ufw allow 1194/udp
 
 # Allow ping (ICMP)
 log "Allowing ping..."
-ufw allow in on any to any port 0:65535 proto icmp
+ufw allow in proto icmp
 
 # Allow all outbound traffic
 log "Allowing all outbound traffic..."
@@ -63,8 +63,8 @@ ufw allow out on any
 
 # Allow established and related connections
 log "Allowing established and related connections..."
-ufw allow in on any from any to any port 0:65535 proto tcp state ESTABLISHED,RELATED
-ufw allow in on any from any to any port 0:65535 proto udp state ESTABLISHED,RELATED
+ufw allow in proto tcp state ESTABLISHED,RELATED
+ufw allow in proto udp state ESTABLISHED,RELATED
 
 # Enable IP forwarding
 log "Enabling IP forwarding..."

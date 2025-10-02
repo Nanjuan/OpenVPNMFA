@@ -72,7 +72,7 @@ ufw allow in 123/udp
 
 # Allow ping (ICMP)
 log "Allowing ping..."
-ufw allow in on any to any port 0:65535 proto icmp
+ufw allow in proto icmp
 
 # Allow all outbound traffic
 log "Allowing all outbound traffic..."

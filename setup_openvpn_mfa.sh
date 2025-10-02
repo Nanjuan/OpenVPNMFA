@@ -57,12 +57,33 @@ mkdir -p /var/log/openvpn
 
 # Set up Easy-RSA
 log "Setting up Easy-RSA..."
+if [ -d "/etc/openvpn/easy-rsa" ]; then
+    log "Easy-RSA directory exists, removing and recreating..."
+    rm -rf /etc/openvpn/easy-rsa
+fi
 make-cadir /etc/openvpn/easy-rsa
 cd /etc/openvpn/easy-rsa
 
 # Configure Easy-RSA
 log "Configuring Easy-RSA..."
-cat > vars << EOF
+# Check Easy-RSA version and configure accordingly
+if ./easyrsa version | grep -q "3\."; then
+    log "Configuring Easy-RSA 3.x..."
+    cat > vars << 'EOF'
+set_var EASYRSA_REQ_COUNTRY "US"
+set_var EASYRSA_REQ_PROVINCE "CA"
+set_var EASYRSA_REQ_CITY "SanFrancisco"
+set_var EASYRSA_REQ_ORG "OpenVPN"
+set_var EASYRSA_REQ_EMAIL "admin@example.com"
+set_var EASYRSA_REQ_OU "IT"
+set_var EASYRSA_KEY_SIZE 2048
+set_var EASYRSA_CA_EXPIRE 3650
+set_var EASYRSA_CERT_EXPIRE 3650
+set_var EASYRSA_CRL_DAYS 60
+EOF
+else
+    log "Configuring Easy-RSA 2.x..."
+    cat > vars << EOF
 export KEY_COUNTRY="US"
 export KEY_PROVINCE="CA"
 export KEY_CITY="SanFrancisco"
@@ -71,41 +92,59 @@ export KEY_EMAIL="admin@example.com"
 export KEY_OU="IT"
 export KEY_NAME="OpenVPN-CA"
 EOF
+fi
 
 # Initialize PKI
 log "Initializing PKI..."
-source vars
 
-# Check Easy-RSA version and use appropriate command
-if [ -f "./clean-all" ]; then
-    ./clean-all
-elif [ -f "./clean" ]; then
-    ./clean
-else
-    # For newer versions, use easyrsa directly
-    ./easyrsa clean
-fi
-
-if [ -f "./build-ca" ]; then
-    ./build-ca --batch
-else
+# Check Easy-RSA version and initialize accordingly
+if ./easyrsa version | grep -q "3\."; then
+    log "Initializing PKI for Easy-RSA 3.x..."
+    ./easyrsa init-pki
     ./easyrsa build-ca nopass
+else
+    log "Initializing PKI for Easy-RSA 2.x..."
+    source vars
+    
+    # Check Easy-RSA version and use appropriate command
+    if [ -f "./clean-all" ]; then
+        ./clean-all
+    elif [ -f "./clean" ]; then
+        ./clean
+    else
+        # For newer versions, use easyrsa directly
+        ./easyrsa clean
+    fi
+
+    if [ -f "./build-ca" ]; then
+        ./build-ca --batch
+    else
+        ./easyrsa build-ca nopass
+    fi
 fi
 
 # Generate server certificate and key
 log "Generating server certificate..."
-if [ -f "./build-key-server" ]; then
-    ./build-key-server --batch server
-else
+if ./easyrsa version | grep -q "3\."; then
     ./easyrsa build-server-full server nopass
+else
+    if [ -f "./build-key-server" ]; then
+        ./build-key-server --batch server
+    else
+        ./easyrsa build-server-full server nopass
+    fi
 fi
 
 # Generate Diffie-Hellman parameters
 log "Generating Diffie-Hellman parameters..."
-if [ -f "./build-dh" ]; then
-    ./build-dh
-else
+if ./easyrsa version | grep -q "3\."; then
     ./easyrsa gen-dh
+else
+    if [ -f "./build-dh" ]; then
+        ./build-dh
+    else
+        ./easyrsa gen-dh
+    fi
 fi
 
 # Generate TLS-auth key
@@ -114,11 +153,21 @@ openvpn --genkey --secret ta.key
 
 # Move certificates to proper locations
 log "Moving certificates to proper locations..."
-cp keys/ca.crt /etc/openvpn/
-cp keys/server.crt /etc/openvpn/
-cp keys/server.key /etc/openvpn/
-cp keys/dh2048.pem /etc/openvpn/
-cp ta.key /etc/openvpn/
+if ./easyrsa version | grep -q "3\."; then
+    # Easy-RSA 3.x paths
+    cp pki/ca.crt /etc/openvpn/
+    cp pki/issued/server.crt /etc/openvpn/
+    cp pki/private/server.key /etc/openvpn/
+    cp pki/dh.pem /etc/openvpn/dh2048.pem
+    cp ta.key /etc/openvpn/
+else
+    # Easy-RSA 2.x paths
+    cp keys/ca.crt /etc/openvpn/
+    cp keys/server.crt /etc/openvpn/
+    cp keys/server.key /etc/openvpn/
+    cp keys/dh2048.pem /etc/openvpn/
+    cp ta.key /etc/openvpn/
+fi
 
 # Set proper permissions
 chmod 600 /etc/openvpn/server.key

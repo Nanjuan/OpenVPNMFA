@@ -261,8 +261,19 @@ case "$1" in
         
         # Create user if doesn't exist
         if ! id "$USERNAME" &>/dev/null; then
-            useradd -m -s /bin/bash "$USERNAME"
-            echo "User $USERNAME created"
+            read -s -p "Enter password for $USERNAME: " USER_PASSWORD
+            echo
+            if [ -n "$USER_PASSWORD" ]; then
+                useradd -m -s /bin/bash "$USERNAME"
+                echo "$USERNAME:$USER_PASSWORD" | chpasswd
+                echo "User $USERNAME created with password"
+            else
+                echo "No password provided, creating user without password"
+                useradd -m -s /bin/bash "$USERNAME"
+                echo "User $USERNAME created (no password set)"
+            fi
+        else
+            echo "User $USERNAME already exists"
         fi
         
         # Set up Google Authenticator for user
@@ -365,43 +376,16 @@ EOF
 
 chmod +x /usr/local/bin/openvpn-user-mgmt.sh
 
-# Configure firewall
-log "Configuring firewall..."
-ufw --force reset
-ufw default allow outgoing
-ufw default deny incoming
-ufw allow ssh
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 53/udp
-ufw allow 53/tcp
-ufw allow 1194/udp
-ufw allow out on any
-ufw allow in on any from any to any
-ufw --force enable
+# Note: Firewall configuration removed - configure manually if needed
+log "Skipping firewall configuration - configure manually if needed"
 
 # Enable IP forwarding
 log "Enabling IP forwarding..."
 echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 sysctl -p
 
-# Configure NAT for VPN traffic
-log "Configuring NAT for VPN traffic..."
-cat > /etc/ufw/before.rules << 'EOF'
-# NAT table rules
-*nat
-:POSTROUTING ACCEPT [0:0]
-
-# Allow traffic from OpenVPN client to the internet
--A POSTROUTING -s 10.8.0.0/8 -o eth0 -j MASQUERADE
-
-# don't delete the 'COMMIT' line or these nat table rules won't be processed
-COMMIT
-EOF
-
-# Restart UFW to apply NAT rules
-ufw --force reload
+# Note: NAT configuration removed - configure manually if needed
+log "Skipping NAT configuration - configure manually if needed"
 
 # Create systemd service for OpenVPN
 log "Creating systemd service..."
@@ -494,9 +478,23 @@ chmod 755 /var/log/openvpn
 
 # Create initial admin user
 log "Creating initial admin user..."
-read -p "Enter admin username: " ADMIN_USER
+read -p "Enter OpenVPN username: " ADMIN_USER
 if [ -n "$ADMIN_USER" ]; then
-    /usr/local/bin/openvpn-user-mgmt.sh add "$ADMIN_USER"
+    read -s -p "Enter password for $ADMIN_USER: " ADMIN_PASSWORD
+    echo
+    if [ -n "$ADMIN_PASSWORD" ]; then
+        # Create user with password
+        useradd -m -s /bin/bash "$ADMIN_USER"
+        echo "$ADMIN_USER:$ADMIN_PASSWORD" | chpasswd
+        log "User $ADMIN_USER created with password"
+        
+        # Add to OpenVPN
+        /usr/local/bin/openvpn-user-mgmt.sh add "$ADMIN_USER"
+    else
+        log "No password provided, skipping user creation"
+    fi
+else
+    log "No username provided, skipping user creation"
 fi
 
 log "OpenVPN server setup completed successfully!"

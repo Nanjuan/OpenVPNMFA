@@ -367,10 +367,19 @@ chmod +x /usr/local/bin/openvpn-user-mgmt.sh
 
 # Configure firewall
 log "Configuring firewall..."
-ufw --force enable
-ufw allow 1194/udp
+ufw --force reset
+ufw default allow outgoing
+ufw default deny incoming
 ufw allow ssh
 ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 53/udp
+ufw allow 53/tcp
+ufw allow 1194/udp
+ufw allow out on any
+ufw allow in on any from any to any
+ufw --force enable
 
 # Enable IP forwarding
 log "Enabling IP forwarding..."

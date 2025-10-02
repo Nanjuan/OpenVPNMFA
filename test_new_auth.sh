@@ -88,31 +88,47 @@ if [ -n "$1" ]; then
     
     log "✅ User $USERNAME exists and has MFA configured"
     
+    # Get current MFA code for reference
+    SECRET=$(head -1 "/home/$USERNAME/.google_authenticator")
+    CURRENT_CODE=$(oathtool --totp -b "$SECRET")
+    log "Current MFA code: $CURRENT_CODE"
+    
     # Test the authentication script
     log "Testing authentication script..."
-    echo "Enter password + MFA code (no space between them):"
-    echo "Example: if password is 'mypass123' and MFA code is '123456', enter: mypass123123456"
-    read -s password_mfa
+    echo ""
+    echo "Enter the OpenVPN user password for $USERNAME:"
+    read -s user_password
     echo ""
     
-    if [ -n "$password_mfa" ]; then
-        log "Testing authentication with provided credentials..."
-        export username="$USERNAME"
-        export password="$password_mfa"
+    if [ -n "$user_password" ]; then
+        echo "Enter the current MFA code from your authenticator app:"
+        read -s mfa_code
+        echo ""
         
-        if /usr/local/bin/openvpn-auth.sh; then
-            log "✅ Authentication successful!"
+        if [ -n "$mfa_code" ]; then
+            # Combine password and MFA code
+            password_mfa="${user_password}${mfa_code}"
+            
+            log "Testing authentication with provided credentials..."
+            export username="$USERNAME"
+            export password="$password_mfa"
+            
+            if /usr/local/bin/openvpn-auth.sh; then
+                log "✅ Authentication successful!"
+            else
+                error "❌ Authentication failed!"
+                echo ""
+                echo "Troubleshooting steps:"
+                echo "1. Check if password is correct"
+                echo "2. Check if MFA code is current (30-second window)"
+                echo "3. Check time synchronization"
+                echo "4. Check authentication logs: sudo tail -f /var/log/openvpn/auth.log"
+            fi
         else
-            error "❌ Authentication failed!"
-            echo ""
-            echo "Troubleshooting steps:"
-            echo "1. Check if password is correct"
-            echo "2. Check if MFA code is current (30-second window)"
-            echo "3. Check time synchronization"
-            echo "4. Check authentication logs: sudo tail -f /var/log/openvpn/auth.log"
+            warn "No MFA code provided for test"
         fi
     else
-        warn "No password+MFA provided for test"
+        warn "No password provided for test"
     fi
 else
     warn "No username provided for testing"

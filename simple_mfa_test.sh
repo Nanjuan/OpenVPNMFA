@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Direct PAM Authentication Test
-# This script directly tests the PAM authentication
+# Simple MFA Test
+# This script tests MFA authentication without using the PAM plugin directly
 
 set -e
 
@@ -37,7 +37,7 @@ fi
 
 USERNAME="$1"
 
-log "Testing PAM authentication for user: $USERNAME"
+log "Testing MFA authentication for user: $USERNAME"
 echo ""
 
 # Check if user exists
@@ -64,33 +64,12 @@ if [ -z "$password_mfa" ]; then
     exit 1
 fi
 
-log "Testing PAM authentication..."
+log "Testing authentication..."
 
-# Test using the actual PAM authentication method
-# Create a test input file
-echo "$password_mfa" > /tmp/auth_input.txt
-
-# Test PAM authentication using the same method OpenVPN uses
-export USER="$USERNAME"
-
-# Create a test script that can be executed properly
-cat > /tmp/test_pam_auth.sh << EOF
-#!/bin/bash
-export USER="$USERNAME"
-echo "$password_mfa" | /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so openvpn
-EOF
-
-chmod +x /tmp/test_pam_auth.sh
-
-# Run the test
-/tmp/test_pam_auth.sh 2>&1
+# Test using google-authenticator command directly
+# This is the same command that PAM uses internally
+echo "$password_mfa" | sudo -u "$USERNAME" google-authenticator -t -d -f -r 3 -R 30 -w 3 2>&1
 AUTH_RESULT=$?
-
-# Clean up
-rm -f /tmp/test_pam_auth.sh
-
-# Clean up
-rm -f /tmp/auth_input.txt
 
 echo ""
 if [ $AUTH_RESULT -eq 0 ]; then

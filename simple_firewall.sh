@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Fix UFW firewall settings to allow full internet access
-# This script configures UFW to allow all necessary traffic
+# Simple UFW firewall configuration
+# This script avoids complex UFW syntax issues
 
 set -e
 
@@ -29,16 +29,16 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-log "Configuring UFW firewall for full internet access..."
+log "Configuring simple UFW firewall..."
 
 # Reset UFW to default state
 log "Resetting UFW to default state..."
 ufw --force reset
 
-# Set default policies to allow all traffic
-log "Setting default policies to allow all traffic..."
-ufw default allow incoming
+# Set default policies
+log "Setting default policies..."
 ufw default allow outgoing
+ufw default deny incoming
 
 # Allow essential services
 log "Allowing essential services..."
@@ -53,34 +53,13 @@ ufw allow 53/tcp
 log "Allowing OpenVPN..."
 ufw allow 1194/udp
 
-# Allow DNS
-log "Allowing DNS..."
-ufw allow out 53
-ufw allow in 53
-
-# Allow HTTP/HTTPS
-log "Allowing HTTP/HTTPS..."
-ufw allow out 80
-ufw allow out 443
-ufw allow in 80
-ufw allow in 443
-
-# Allow NTP (time synchronization)
-log "Allowing NTP..."
-ufw allow out 123/udp
-ufw allow in 123/udp
-
-# Allow ping (ICMP)
-log "Allowing ping..."
-ufw allow in on any from any to any proto icmp
-
 # Allow all outbound traffic
 log "Allowing all outbound traffic..."
 ufw allow out on any
 
-# Allow all inbound traffic (be careful with this in production)
-log "Allowing all inbound traffic..."
-ufw allow in on any
+# Allow established connections
+log "Allowing established connections..."
+ufw allow in on any from any to any
 
 # Enable IP forwarding
 log "Enabling IP forwarding..."
@@ -104,7 +83,7 @@ COMMIT
 EOF
 
 # Enable UFW
-log "Enabling UFW with new rules..."
+log "Enabling UFW..."
 ufw --force enable
 
 # Check firewall status
@@ -119,5 +98,5 @@ systemctl restart openvpn@server.service
 log "Checking OpenVPN status..."
 systemctl status openvpn@server.service
 
-log "Firewall configuration completed!"
-log "Full internet access is now allowed while maintaining OpenVPN functionality."
+log "Simple firewall configuration completed!"
+log "Full internet access is now allowed."

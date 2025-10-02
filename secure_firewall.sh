@@ -55,7 +55,7 @@ ufw allow 1194/udp
 
 # Allow ping (ICMP)
 log "Allowing ping..."
-ufw allow in proto icmp
+ufw allow in on any from any to any proto icmp
 
 # Allow all outbound traffic
 log "Allowing all outbound traffic..."

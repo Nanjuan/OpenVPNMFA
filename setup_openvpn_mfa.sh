@@ -270,8 +270,18 @@ case "$1" in
         
         # Generate client certificate
         cd /etc/openvpn/easy-rsa
-        source vars
-        ./build-key --batch "$USERNAME"
+        
+        # Check Easy-RSA version and use appropriate commands
+        if ./easyrsa version | grep -q "3\."; then
+            ./easyrsa build-client-full "$USERNAME" nopass
+        else
+            source vars
+            if [ -f "./build-key" ]; then
+                ./build-key --batch "$USERNAME"
+            else
+                ./easyrsa build-client-full "$USERNAME" nopass
+            fi
+        fi
         
         # Create client configuration
         cat > "/etc/openvpn/client/${USERNAME}.ovpn" << CLIENT_EOF
@@ -294,10 +304,10 @@ auth-user-pass
 $(cat /etc/openvpn/ca.crt)
 </ca>
 <cert>
-$(cat /etc/openvpn/easy-rsa/keys/${USERNAME}.crt)
+$(if ./easyrsa version | grep -q "3\."; then cat /etc/openvpn/easy-rsa/pki/issued/${USERNAME}.crt; else cat /etc/openvpn/easy-rsa/keys/${USERNAME}.crt; fi)
 </cert>
 <key>
-$(cat /etc/openvpn/easy-rsa/keys/${USERNAME}.key)
+$(if ./easyrsa version | grep -q "3\."; then cat /etc/openvpn/easy-rsa/pki/private/${USERNAME}.key; else cat /etc/openvpn/easy-rsa/keys/${USERNAME}.key; fi)
 </key>
 <tls-auth>
 $(cat /etc/openvpn/ta.key)
@@ -319,8 +329,18 @@ CLIENT_EOF
         
         # Revoke certificate
         cd /etc/openvpn/easy-rsa
-        source vars
-        ./revoke-full "$USERNAME"
+        
+        # Check Easy-RSA version and use appropriate commands
+        if ./easyrsa version | grep -q "3\."; then
+            ./easyrsa revoke "$USERNAME"
+        else
+            source vars
+            if [ -f "./revoke-full" ]; then
+                ./revoke-full "$USERNAME"
+            else
+                ./easyrsa revoke "$USERNAME"
+            fi
+        fi
         
         # Remove client config
         rm -f "/etc/openvpn/client/${USERNAME}.ovpn"
@@ -384,7 +404,7 @@ After=network.target
 [Service]
 Type=notify
 PrivateTmp=true
-WorkingDirectory=/etc/openvpn/server
+WorkingDirectory=/etc/openvpn
 ExecStart=/usr/sbin/openvpn --config %i.conf --writepid /run/openvpn/%i.pid
 PIDFile=/run/openvpn/%i.pid
 KillMode=mixed

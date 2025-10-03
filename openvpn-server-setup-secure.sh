@@ -359,17 +359,44 @@ configure_firewall() {
         exit 1
     fi
     
-    # Configure iptables rules
-    iptables -t nat -A POSTROUTING -s $VPN_NETWORK/24 -o $WAN_INTERFACE -j MASQUERADE
-    iptables -A INPUT -i tun+ -j ACCEPT
-    iptables -A FORWARD -i tun+ -j ACCEPT
-    iptables -A FORWARD -i tun+ -o $WAN_INTERFACE -j ACCEPT
-    iptables -A FORWARD -i $WAN_INTERFACE -o tun+ -j ACCEPT
-    
-    # Save iptables rules
-    netfilter-persistent save > /dev/null
-    
-    success "Firewall configured"
+    # Check if UFW is active
+    if systemctl is-active --quiet ufw; then
+        log "UFW is active, configuring UFW rules..."
+        
+        # Configure UFW rules for OpenVPN
+        ufw allow $VPN_PORT/$VPN_PROTO comment "OpenVPN"
+        ufw allow ssh comment "SSH"
+        ufw allow out on tun+ comment "OpenVPN outbound"
+        ufw allow in on tun+ comment "OpenVPN inbound"
+        
+        # Add NAT rules to UFW before.rules
+        cat > /etc/ufw/before.rules << EOF
+# OpenVPN NAT rules
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s $VPN_NETWORK/24 -o $WAN_INTERFACE -j MASQUERADE
+COMMIT
+EOF
+        
+        # Reload UFW
+        ufw --force reload
+        
+        success "UFW configured for OpenVPN"
+    else
+        log "UFW not active, using iptables directly..."
+        
+        # Configure iptables rules directly
+        iptables -t nat -A POSTROUTING -s $VPN_NETWORK/24 -o $WAN_INTERFACE -j MASQUERADE
+        iptables -A INPUT -i tun+ -j ACCEPT
+        iptables -A FORWARD -i tun+ -j ACCEPT
+        iptables -A FORWARD -i tun+ -o $WAN_INTERFACE -j ACCEPT
+        iptables -A FORWARD -i $WAN_INTERFACE -o tun+ -j ACCEPT
+        
+        # Save iptables rules
+        netfilter-persistent save > /dev/null
+        
+        success "iptables configured for OpenVPN"
+    fi
 }
 
 # Configure fail2ban

@@ -125,7 +125,18 @@ EOF
     ./easyrsa gen-dh
     openvpn --genkey secret ta.key
     
-    success "Easy-RSA setup completed"
+    # Generate CRL (Certificate Revocation List)
+    log "Generating Certificate Revocation List..."
+    ./easyrsa gen-crl
+    chmod 644 pki/crl.pem
+    
+    # Verify CRL was created
+    if [ ! -f "pki/crl.pem" ]; then
+        error "Failed to create CRL file"
+        exit 1
+    fi
+    
+    success "Easy-RSA setup completed with CRL"
 }
 
 # Generate server configuration with modern security
@@ -224,11 +235,28 @@ copy_certificates() {
     cp "$EASYRSA_DIR/pki/dh.pem" "$OPENVPN_DIR/"
     cp "$EASYRSA_DIR/ta.key" "$OPENVPN_DIR/"
     
+    # Verify CRL exists before copying
+    if [ ! -f "$EASYRSA_DIR/pki/crl.pem" ]; then
+        error "CRL file not found. Regenerating..."
+        cd "$EASYRSA_DIR"
+        ./easyrsa gen-crl
+        chmod 644 pki/crl.pem
+    fi
+    
     # Set proper permissions
     chmod 600 "$OPENVPN_DIR"/*.key
     chmod 644 "$OPENVPN_DIR"/*.crt
     chmod 644 "$OPENVPN_DIR"/*.pem
     chmod 600 "$OPENVPN_DIR"/ta.key
+    
+    # Verify all required files exist
+    local required_files=("$OPENVPN_DIR/ca.crt" "$OPENVPN_DIR/server.crt" "$OPENVPN_DIR/server.key" "$OPENVPN_DIR/dh.pem" "$OPENVPN_DIR/ta.key" "$EASYRSA_DIR/pki/crl.pem")
+    for file in "${required_files[@]}"; do
+        if [ ! -f "$file" ]; then
+            error "Required file missing: $file"
+            exit 1
+        fi
+    done
     
     success "Certificates copied and permissions set"
 }
@@ -274,7 +302,7 @@ ReloadPropagatedFrom=openvpn.service
 Type=notify
 PrivateTmp=true
 WorkingDirectory=$OPENVPN_DIR
-ExecStart=/usr/sbin/openvpn --config %i.conf --writepid /run/openvpn/%i.pid
+ExecStart=/usr/sbin/openvpn --config /etc/openvpn/%i.conf --writepid /run/openvpn/%i.pid
 PIDFile=/run/openvpn/%i.pid
 KillMode=mixed
 Restart=always
@@ -566,6 +594,13 @@ start_services() {
     touch "$OPENVPN_DIR/ipp.txt"
     chmod 644 "$OPENVPN_DIR/ipp.txt"
     
+    # Test configuration before starting service
+    log "Testing OpenVPN configuration..."
+    if ! openvpn --config "$OPENVPN_DIR/server.conf" --test-crypto; then
+        error "OpenVPN configuration test failed"
+        exit 1
+    fi
+    
     # Start OpenVPN
     systemctl enable openvpn@server.service
     systemctl start openvpn@server.service
@@ -577,6 +612,8 @@ start_services() {
     else
         error "Failed to start OpenVPN service"
         systemctl status openvpn@server.service
+        log "Checking OpenVPN logs for errors:"
+        tail -20 /var/log/openvpn/openvpn.log 2>/dev/null || true
         exit 1
     fi
 }

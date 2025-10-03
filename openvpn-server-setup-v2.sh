@@ -1,16 +1,24 @@
 #!/bin/bash
 
-# OpenVPN Server Setup Script for Ubuntu
-# This script installs and configures OpenVPN with best security practices
-# Includes user management functionality (add, remove, renew users)
+# OpenVPN Server Setup Script v2.0
+# Compatible with Ubuntu 24.04+ and OpenVPN 2.6.12+
+# Based on latest security best practices and version compatibility research
 
 set -euo pipefail
+
+# Script metadata
+SCRIPT_VERSION="2.0"
+SCRIPT_DATE="2024-10-03"
+COMPATIBLE_UBUNTU="20.04,22.04,24.04,24.10"
+COMPATIBLE_OPENVPN="2.6.12+"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration variables
@@ -20,6 +28,7 @@ SERVER_NAME="server"
 CLIENT_DIR="/etc/openvpn/clients"
 LOG_DIR="/var/log/openvpn"
 BACKUP_DIR="/etc/openvpn/backup"
+SCRIPT_DIR="/usr/local/bin"
 
 # Network configuration
 VPN_NETWORK="10.8.0.0"
@@ -27,23 +36,22 @@ VPN_NETMASK="255.255.255.0"
 VPN_PORT="1194"
 VPN_PROTOCOL="udp"
 
-# Security settings (updated for latest versions)
+# Security settings (latest standards)
 KEY_SIZE="4096"
 CURVE="secp384r1"
 CIPHER="AES-256-GCM"
 AUTH="SHA512"
 TLS_VERSION="1.2"
+DH_SIZE="4096"
 
-# Software versions (latest as of 2024-2025)
-# Ubuntu: 24.04 LTS (Noble Numbat), 24.10 (Oracular Oriole)
-# OpenVPN: 2.6.12+
-# Easy-RSA: 3.1.0+
-# OpenSSL: 3.0.2+
-# systemd: 252+
-# UFW: 0.36+
-# iptables: 1.8.8+
+# System information
+UBUNTU_VERSION=""
+UBUNTU_CODENAME=""
+OPENVPN_VERSION=""
+OPENSSL_VERSION=""
+EASYRSA_VERSION=""
 
-# Logging function
+# Logging functions
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
 }
@@ -60,6 +68,16 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
+success() {
+    echo -e "${GREEN}[SUCCESS] $1${NC}"
+}
+
+header() {
+    echo -e "${PURPLE}================================${NC}"
+    echo -e "${PURPLE}$1${NC}"
+    echo -e "${PURPLE}================================${NC}"
+}
+
 # Check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -68,64 +86,105 @@ check_root() {
     fi
 }
 
+# Display script information
+show_header() {
+    header "OpenVPN Server Setup Script v$SCRIPT_VERSION"
+    echo -e "${CYAN}Compatible with: Ubuntu $COMPATIBLE_UBUNTU${NC}"
+    echo -e "${CYAN}OpenVPN: $COMPATIBLE_OPENVPN${NC}"
+    echo -e "${CYAN}Date: $SCRIPT_DATE${NC}"
+    echo ""
+}
+
+# Detect system information
+detect_system() {
+    log "Detecting system information..."
+    
+    UBUNTU_VERSION=$(lsb_release -rs)
+    UBUNTU_CODENAME=$(lsb_release -cs)
+    
+    log "Ubuntu Version: $UBUNTU_VERSION ($UBUNTU_CODENAME)"
+    
+    # Verify Ubuntu version compatibility
+    case "$UBUNTU_VERSION" in
+        "20.04"|"22.04"|"24.04"|"24.10")
+            success "Ubuntu version $UBUNTU_VERSION is supported"
+            ;;
+        *)
+            warning "Ubuntu version $UBUNTU_VERSION may not be fully tested"
+            ;;
+    esac
+}
+
 # Update system packages
 update_system() {
     log "Updating system packages..."
-    apt update && apt upgrade -y
-    apt install -y curl wget gnupg2 software-properties-common
+    
+    # Update package lists
+    apt update
+    
+    # Upgrade system packages
+    apt upgrade -y
+    
+    # Install essential packages
+    apt install -y curl wget gnupg2 software-properties-common ca-certificates \
+                   lsb-release apt-transport-https
+    
+    success "System packages updated"
 }
 
 # Install OpenVPN and dependencies
 install_openvpn() {
     log "Installing OpenVPN and dependencies..."
     
-    # Detect Ubuntu version for compatibility
-    UBUNTU_VERSION=$(lsb_release -rs)
-    UBUNTU_CODENAME=$(lsb_release -cs)
-    
-    log "Detected Ubuntu $UBUNTU_VERSION ($UBUNTU_CODENAME)"
-    
-    # Try to install from Ubuntu repositories first (more reliable)
+    # Try Ubuntu repositories first (most reliable)
     if apt install -y openvpn easy-rsa ufw iptables-persistent; then
-        log "Installed OpenVPN from Ubuntu repositories"
-        OPENVPN_VERSION=$(openvpn --version | head -n1 | awk '{print $2}')
-        log "OpenVPN version: $OPENVPN_VERSION"
-    else
-        log "Ubuntu repositories failed, trying OpenVPN repository..."
+        success "Installed OpenVPN from Ubuntu repositories"
         
-        # Add OpenVPN repository for latest version (modern method for Ubuntu 22.04+)
+        # Get version information
+        OPENVPN_VERSION=$(openvpn --version | head -n1 | awk '{print $2}')
+        OPENSSL_VERSION=$(openssl version | awk '{print $2}')
+        
+        log "OpenVPN version: $OPENVPN_VERSION"
+        log "OpenSSL version: $OPENSSL_VERSION"
+        
+    else
+        warning "Ubuntu repositories failed, trying OpenVPN repository..."
+        
+        # Add OpenVPN repository (modern method)
         if [[ "$UBUNTU_VERSION" == "24.04" ]] || [[ "$UBUNTU_VERSION" == "24.10" ]]; then
             # Use new OpenVPN repository format for Ubuntu 24.04+
-            wget -O - https://swupdate.openvpn.net/repos/openvpn-repo-pkg-key.pub | gpg --dearmor -o /usr/share/keyrings/openvpn-archive-keyring.gpg
-            echo "deb [signed-by=/usr/share/keyrings/openvpn-archive-keyring.gpg] https://swupdate.openvpn.net/community/openvpn3/repos/openvpn3-$UBUNTU_CODENAME main" > /etc/apt/sources.list.d/openvpn3.list
+            wget -O - https://swupdate.openvpn.net/repos/openvpn-repo-pkg-key.pub | \
+                gpg --dearmor -o /usr/share/keyrings/openvpn-archive-keyring.gpg
+            
+            echo "deb [signed-by=/usr/share/keyrings/openvpn-archive-keyring.gpg] \
+                https://swupdate.openvpn.net/community/openvpn3/repos/openvpn3-$UBUNTU_CODENAME main" | \
+                tee /etc/apt/sources.list.d/openvpn3.list
         else
             # Fallback for older Ubuntu versions
             wget -O /tmp/openvpn-repo.gpg https://swupdate.openvpn.net/repos/repo-public.gpg
             gpg --dearmor /tmp/openvpn-repo.gpg
             mv /tmp/openvpn-repo.gpg.gpg /etc/apt/trusted.gpg.d/openvpn-repo.gpg
-            echo "deb http://build.openvpn.net/debian/openvpn/stable $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/openvpn.list
+            echo "deb http://build.openvpn.net/debian/openvpn/stable $UBUNTU_CODENAME main" | \
+                tee /etc/apt/sources.list.d/openvpn.list
         fi
         
         apt update
         apt install -y openvpn easy-rsa ufw iptables-persistent
         
-        # Clean up temporary files
+        # Clean up
         rm -f /tmp/openvpn-repo.gpg
     fi
     
     # Install additional security tools
     apt install -y fail2ban unattended-upgrades
     
-    # Verify OpenSSL version for compatibility
-    OPENSSL_VERSION=$(openssl version | awk '{print $2}')
-    log "OpenSSL version: $OPENSSL_VERSION"
-    
-    # Check for OpenSSL 3.0+ compatibility
-    if [[ "$OPENSSL_VERSION" =~ ^3\. ]]; then
-        log "OpenSSL 3.0+ detected - ensuring compatibility"
+    # Verify installation
+    if command -v openvpn &> /dev/null; then
+        success "OpenVPN installation completed"
+    else
+        error "OpenVPN installation failed"
+        exit 1
     fi
-    
-    log "OpenVPN installation completed"
 }
 
 # Setup EasyRSA Certificate Authority
@@ -141,14 +200,14 @@ setup_easyrsa() {
     # Navigate to EasyRSA directory
     cd $EASYRSA_DIR
     
-    # Check Easy-RSA version for compatibility
+    # Get Easy-RSA version
     EASYRSA_VERSION=$(./easyrsa version | head -n1 | awk '{print $2}')
     log "Easy-RSA version: $EASYRSA_VERSION"
     
-    # Initialize PKI with modern settings
+    # Initialize PKI
     ./easyrsa init-pki
     
-    # Create CA with secure settings (compatible with Easy-RSA 3.1.0+)
+    # Create CA with secure settings
     ./easyrsa --batch --req-cn="OpenVPN-CA" build-ca nopass
     
     # Generate Diffie-Hellman parameters with modern key size
@@ -160,9 +219,9 @@ setup_easyrsa() {
     # Generate server certificate
     ./easyrsa --batch --req-cn="OpenVPN-Server" build-server-full $SERVER_NAME nopass
     
-    # Verify certificates were created successfully
+    # Verify certificates were created
     if [[ -f "pki/ca.crt" ]] && [[ -f "pki/issued/$SERVER_NAME.crt" ]]; then
-        log "EasyRSA setup completed successfully"
+        success "EasyRSA setup completed successfully"
     else
         error "EasyRSA setup failed - certificates not created"
         exit 1
@@ -173,10 +232,10 @@ setup_easyrsa() {
 configure_openvpn() {
     log "Configuring OpenVPN server..."
     
-    # Create server configuration file (compatible with OpenVPN 2.6.12+)
+    # Create server configuration file (OpenVPN 2.6.12+ compatible)
     cat > $OPENVPN_DIR/$SERVER_NAME.conf << EOF
 # OpenVPN Server Configuration
-# Generated by openvpn-server-setup.sh
+# Generated by openvpn-server-setup-v2.sh
 # Compatible with OpenVPN 2.6.12+ and OpenSSL 3.0.2+
 
 # Network settings
@@ -246,19 +305,16 @@ tls-version-min 1.2
 tls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384
 EOF
 
-    # Create log directory
+    # Create directories
     mkdir -p $LOG_DIR
-    chown openvpn:openvpn $LOG_DIR
-    
-    # Create client directory
     mkdir -p $CLIENT_DIR
-    chown openvpn:openvpn $CLIENT_DIR
-    
-    # Create backup directory
     mkdir -p $BACKUP_DIR
-    chown openvpn:openvpn $BACKUP_DIR
     
-    log "OpenVPN server configuration completed"
+    # Set proper permissions
+    chown openvpn:openvpn $LOG_DIR $CLIENT_DIR $BACKUP_DIR
+    chmod 755 $LOG_DIR $CLIENT_DIR $BACKUP_DIR
+    
+    success "OpenVPN server configuration completed"
 }
 
 # Configure firewall
@@ -284,7 +340,7 @@ configure_firewall() {
     # Save iptables rules
     iptables-save > /etc/iptables/rules.v4
     
-    log "Firewall configuration completed"
+    success "Firewall configuration completed"
 }
 
 # Configure systemd service
@@ -295,222 +351,28 @@ configure_systemd() {
     systemctl enable openvpn@$SERVER_NAME
     systemctl start openvpn@$SERVER_NAME
     
-    # Create status check script
-    cat > /usr/local/bin/openvpn-status << 'EOF'
-#!/bin/bash
-systemctl status openvpn@server
-echo "---"
-echo "Connected clients:"
-cat /var/log/openvpn/openvpn-status.log | grep "CLIENT_LIST" | wc -l
-EOF
+    # Wait for service to start
+    sleep 3
     
-    chmod +x /usr/local/bin/openvpn-status
-    
-    log "Systemd service configured"
-}
-
-# User management functions
-add_user() {
-    local username=$1
-    
-    if [[ -z "$username" ]]; then
-        error "Username is required"
-        return 1
-    fi
-    
-    if [[ -f "$EASYRSA_DIR/pki/issued/$username.crt" ]]; then
-        warning "User $username already exists"
-        return 1
-    fi
-    
-    log "Adding user: $username"
-    
-    cd $EASYRSA_DIR
-    ./easyrsa --batch --req-cn="$username" build-client-full "$username" nopass
-    
-    # Generate client configuration
-    generate_client_config "$username"
-    
-    log "User $username added successfully"
-    info "Client configuration saved to: $CLIENT_DIR/$username.ovpn"
-}
-
-remove_user() {
-    local username=$1
-    
-    if [[ -z "$username" ]]; then
-        error "Username is required"
-        return 1
-    fi
-    
-    if [[ ! -f "$EASYRSA_DIR/pki/issued/$username.crt" ]]; then
-        warning "User $username does not exist"
-        return 1
-    fi
-    
-    log "Removing user: $username"
-    
-    cd $EASYRSA_DIR
-    ./easyrsa revoke "$username"
-    ./easyrsa gen-crl
-    
-    # Remove client files
-    rm -f "$CLIENT_DIR/$username.ovpn"
-    rm -f "$CLIENT_DIR/$username.crt"
-    rm -f "$CLIENT_DIR/$username.key"
-    
-    # Copy CRL to OpenVPN directory
-    cp pki/crl.pem $OPENVPN_DIR/
-    
-    # Restart OpenVPN to load new CRL
-    systemctl restart openvpn@$SERVER_NAME
-    
-    log "User $username removed successfully"
-}
-
-renew_user() {
-    local username=$1
-    
-    if [[ -z "$username" ]]; then
-        error "Username is required"
-        return 1
-    fi
-    
-    if [[ ! -f "$EASYRSA_DIR/pki/issued/$username.crt" ]]; then
-        warning "User $username does not exist"
-        return 1
-    fi
-    
-    log "Renewing certificate for user: $username"
-    
-    # Revoke old certificate
-    cd $EASYRSA_DIR
-    ./easyrsa revoke "$username"
-    
-    # Generate new certificate
-    ./easyrsa --batch --req-cn="$username" build-client-full "$username" nopass
-    
-    # Generate new client configuration
-    generate_client_config "$username"
-    
-    # Update CRL
-    ./easyrsa gen-crl
-    cp pki/crl.pem $OPENVPN_DIR/
-    
-    # Restart OpenVPN
-    systemctl restart openvpn@$SERVER_NAME
-    
-    log "Certificate renewed for user: $username"
-}
-
-generate_client_config() {
-    local username=$1
-    local server_ip=$(curl -s ifconfig.me)
-    
-    cat > "$CLIENT_DIR/$username.ovpn" << EOF
-client
-dev tun
-proto $VPN_PROTOCOL
-remote $server_ip $VPN_PORT
-resolv-retry infinite
-nobind
-persist-key
-persist-tun
-cipher $CIPHER
-auth $AUTH
-verb 3
-mute 20
-
-<ca>
-$(cat $EASYRSA_DIR/pki/ca.crt)
-</ca>
-
-<cert>
-$(cat $EASYRSA_DIR/pki/issued/$username.crt)
-</cert>
-
-<key>
-$(cat $EASYRSA_DIR/pki/private/$username.key)
-</key>
-
-<tls-crypt>
-$(cat $EASYRSA_DIR/pki/ta.key)
-</tls-crypt>
-EOF
-
-    chmod 600 "$CLIENT_DIR/$username.ovpn"
-}
-
-# List users
-list_users() {
-    log "Listing all users:"
-    cd $EASYRSA_DIR
-    if [[ -d "pki/issued" ]]; then
-        ls -1 pki/issued/*.crt 2>/dev/null | sed 's/.*\///' | sed 's/\.crt$//' | grep -v "$SERVER_NAME" || echo "No users found"
+    # Check if service is running
+    if systemctl is-active --quiet openvpn@$SERVER_NAME; then
+        success "OpenVPN service started successfully"
     else
-        echo "No users found"
+        error "OpenVPN service failed to start"
+        systemctl status openvpn@$SERVER_NAME
+        exit 1
     fi
-}
-
-# Backup configuration
-backup_config() {
-    local backup_name="openvpn-backup-$(date +%Y%m%d-%H%M%S)"
-    local backup_path="$BACKUP_DIR/$backup_name"
-    
-    log "Creating backup: $backup_name"
-    
-    mkdir -p "$backup_path"
-    
-    # Backup EasyRSA PKI
-    cp -r $EASYRSA_DIR/pki "$backup_path/"
-    
-    # Backup OpenVPN configuration
-    cp $OPENVPN_DIR/$SERVER_NAME.conf "$backup_path/"
-    
-    # Backup client configurations
-    cp -r $CLIENT_DIR "$backup_path/"
-    
-    # Create archive
-    tar -czf "$backup_path.tar.gz" -C "$BACKUP_DIR" "$backup_name"
-    rm -rf "$backup_path"
-    
-    log "Backup created: $backup_path.tar.gz"
-}
-
-# Main installation function
-install_openvpn_server() {
-    log "Starting OpenVPN server installation..."
-    
-    check_root
-    update_system
-    install_openvpn
-    setup_easyrsa
-    configure_openvpn
-    configure_firewall
-    configure_systemd
-    
-    # Create management script
-    create_management_script
-    
-    log "OpenVPN server installation completed successfully!"
-    info "Server IP: $(curl -s ifconfig.me)"
-    info "VPN Port: $VPN_PORT"
-    info "VPN Network: $VPN_NETWORK/24"
-    info "Management script: /usr/local/bin/openvpn-manage"
-    
-    warning "Don't forget to:"
-    warning "1. Configure your firewall to allow traffic on port $VPN_PORT"
-    warning "2. Test the VPN connection"
-    warning "3. Add your first user with: openvpn-manage add <username>"
 }
 
 # Create management script
 create_management_script() {
-    cat > /usr/local/bin/openvpn-manage << 'EOF'
+    log "Creating management script..."
+    
+    cat > $SCRIPT_DIR/openvpn-manage << 'EOF'
 #!/bin/bash
 
-# OpenVPN Management Script
-# Usage: openvpn-manage [add|remove|renew|list|status|backup] [username]
+# OpenVPN Management Script v2.0
+# Compatible with OpenVPN 2.6.12+ and Easy-RSA 3.1.0+
 
 set -euo pipefail
 
@@ -524,15 +386,18 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 log() { echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"; }
 error() { echo -e "${RED}[ERROR] $1${NC}" >&2; }
 warning() { echo -e "${YELLOW}[WARNING] $1${NC}"; }
 info() { echo -e "${BLUE}[INFO] $1${NC}"; }
+success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 
 show_usage() {
-    echo "OpenVPN Management Script"
+    echo -e "${PURPLE}OpenVPN Management Script v2.0${NC}"
     echo ""
     echo "Usage: $0 [command] [username]"
     echo ""
@@ -544,6 +409,8 @@ show_usage() {
     echo "  status             - Show server status"
     echo "  backup             - Create configuration backup"
     echo "  restart            - Restart OpenVPN service"
+    echo "  logs               - Show recent logs"
+    echo "  test               - Test server configuration"
     echo ""
 }
 
@@ -597,7 +464,7 @@ $(cat $EASYRSA_DIR/pki/ta.key)
 CLIENT_EOF
 
     chmod 600 "$CLIENT_DIR/$username.ovpn"
-    log "User $username added successfully"
+    success "User $username added successfully"
     info "Client configuration: $CLIENT_DIR/$username.ovpn"
 }
 
@@ -620,7 +487,7 @@ remove_user() {
     cp pki/crl.pem $OPENVPN_DIR/
     rm -f "$CLIENT_DIR/$username.ovpn"
     systemctl restart openvpn@$SERVER_NAME
-    log "User $username removed successfully"
+    success "User $username removed successfully"
 }
 
 renew_user() {
@@ -642,7 +509,7 @@ renew_user() {
     ./easyrsa gen-crl
     cp pki/crl.pem $OPENVPN_DIR/
     systemctl restart openvpn@$SERVER_NAME
-    log "Certificate renewed for user: $username"
+    success "Certificate renewed for user: $username"
 }
 
 list_users() {
@@ -678,7 +545,26 @@ backup_config() {
     cp -r $CLIENT_DIR "$backup_path/"
     tar -czf "$backup_path.tar.gz" -C "/etc/openvpn/backup" "$backup_name"
     rm -rf "$backup_path"
-    log "Backup created: $backup_path.tar.gz"
+    success "Backup created: $backup_path.tar.gz"
+}
+
+show_logs() {
+    log "Recent OpenVPN logs:"
+    if [[ -f "/var/log/openvpn/openvpn.log" ]]; then
+        tail -20 /var/log/openvpn/openvpn.log
+    else
+        echo "No logs found"
+    fi
+}
+
+test_config() {
+    log "Testing OpenVPN server configuration..."
+    if openvpn --config $OPENVPN_DIR/$SERVER_NAME.conf --test-crypto; then
+        success "Configuration test passed"
+    else
+        error "Configuration test failed"
+        return 1
+    fi
 }
 
 # Main script logic
@@ -703,7 +589,13 @@ case "${1:-}" in
         ;;
     restart)
         systemctl restart openvpn@$SERVER_NAME
-        log "OpenVPN service restarted"
+        success "OpenVPN service restarted"
+        ;;
+    logs)
+        show_logs
+        ;;
+    test)
+        test_config
         ;;
     *)
         show_usage
@@ -712,7 +604,97 @@ case "${1:-}" in
 esac
 EOF
 
-    chmod +x /usr/local/bin/openvpn-manage
+    chmod +x $SCRIPT_DIR/openvpn-manage
+    success "Management script created"
+}
+
+# Create status monitoring script
+create_status_script() {
+    log "Creating status monitoring script..."
+    
+    cat > $SCRIPT_DIR/openvpn-status << 'EOF'
+#!/bin/bash
+
+# OpenVPN Status Script
+# Shows comprehensive server status
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}OpenVPN Server Status${NC}"
+echo "=================="
+
+# Service status
+echo -e "\n${YELLOW}Service Status:${NC}"
+systemctl status openvpn@server --no-pager
+
+# Connected clients
+echo -e "\n${YELLOW}Connected Clients:${NC}"
+if [[ -f "/var/log/openvpn/openvpn-status.log" ]]; then
+    cat /var/log/openvpn/openvpn-status.log | grep "CLIENT_LIST" | wc -l
+else
+    echo "0"
+fi
+
+# Server information
+echo -e "\n${YELLOW}Server Information:${NC}"
+echo "Server IP: $(curl -s ifconfig.me)"
+echo "VPN Port: 1194"
+echo "VPN Network: 10.8.0.0/24"
+
+# Recent logs
+echo -e "\n${YELLOW}Recent Logs:${NC}"
+if [[ -f "/var/log/openvpn/openvpn.log" ]]; then
+    tail -10 /var/log/openvpn/openvpn.log
+else
+    echo "No logs found"
+fi
+EOF
+
+    chmod +x $SCRIPT_DIR/openvpn-status
+    success "Status script created"
+}
+
+# Main installation function
+install_openvpn_server() {
+    header "Starting OpenVPN Server Installation"
+    
+    check_root
+    show_header
+    detect_system
+    update_system
+    install_openvpn
+    setup_easyrsa
+    configure_openvpn
+    configure_firewall
+    configure_systemd
+    create_management_script
+    create_status_script
+    
+    header "Installation Completed Successfully!"
+    
+    success "OpenVPN server is now running"
+    info "Server IP: $(curl -s ifconfig.me)"
+    info "VPN Port: $VPN_PORT"
+    info "VPN Network: $VPN_NETWORK/24"
+    info "Management command: openvpn-manage"
+    info "Status command: openvpn-status"
+    
+    echo ""
+    warning "Next steps:"
+    warning "1. Add your first user: sudo openvpn-manage add <username>"
+    warning "2. Download client config: sudo cp /etc/openvpn/clients/<username>.ovpn /tmp/"
+    warning "3. Transfer to your local machine: scp user@server:/tmp/<username>.ovpn ~/"
+    warning "4. Install OpenVPN client and import the .ovpn file"
+    
+    echo ""
+    info "For help, run: sudo openvpn-manage"
 }
 
 # Main script execution

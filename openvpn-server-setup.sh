@@ -234,7 +234,7 @@ initialize_pki_and_keys() {
 
     if [ ! -f "ta.key" ]; then
         log_info "Generating tls-crypt key"
-        openvpn --genkey --secret ta.key
+        openvpn --genkey secret ta.key
     fi
 
     log_info "Generating certificate revocation list"
@@ -250,7 +250,8 @@ deploy_server_files() {
     install -m 644 -D "$EASYRSA_DIR/pki/issued/server.crt" "$OPENVPN_DIR/server.crt"
     install -m 644 -D "$EASYRSA_DIR/pki/ca.crt" "$OPENVPN_DIR/ca.crt"
     install -m 600 -D "$EASYRSA_DIR/ta.key" "$OPENVPN_DIR/ta.key"
-    install -m 644 -D "$EASYRSA_DIR/pki/crl.pem" "$EASYRSA_DIR/pki/crl.pem"
+    chgrp nogroup "$EASYRSA_DIR" "$EASYRSA_DIR/pki" 2>/dev/null || true
+    chmod 750 "$EASYRSA_DIR" "$EASYRSA_DIR/pki"
 }
 
 write_pam_config() {

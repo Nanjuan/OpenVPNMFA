@@ -1,65 +1,140 @@
-# Quick Installation Guide
+# OpenVPN Server Quick Installation Guide
 
-## 🚀 One-Command Setup
+## Prerequisites
+
+- Ubuntu 18.04+ (tested on 20.04 and 22.04)
+- Root or sudo access
+- Internet connection
+- At least 1GB RAM and 10GB disk space
+
+## Quick Start
+
+### 1. Download and Install
 
 ```bash
-# Make executable and run
+# Download the script
+wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup.sh
 chmod +x openvpn-server-setup.sh
+
+# Run installation
 sudo ./openvpn-server-setup.sh
 ```
 
-## 👤 Add Your First User
+### 2. Add Your First User
 
 ```bash
-# Add a user (will prompt for password and setup MFA)
-sudo openvpn-user-mgmt add john
+# Add a VPN user
+sudo openvpn-manage add myuser
+
+# The client configuration will be created at:
+# /etc/openvpn/clients/myuser.ovpn
 ```
 
-## 📱 Client Setup
-
-1. **Download client config**: `/etc/openvpn/clients/john.ovpn`
-2. **Install OpenVPN client** on your device
-3. **Import the .ovpn file**
-4. **Connect with**:
-   - Username: `john`
-   - Password: `yourpassword123456` (password + MFA code, no space)
-
-## 🔧 Firewall (External)
-
-Configure your firewall to allow:
-- **UDP port 1194** (inbound)
-- **All traffic** on tun0 interface (outbound)
-
-## ✅ Verify Installation
+### 3. Download Client Configuration
 
 ```bash
-# Check service status
-sudo systemctl status openvpn@server.service
+# Copy the .ovpn file to your local machine
+sudo cp /etc/openvpn/clients/myuser.ovpn ~/
+sudo chown $USER:$USER ~/myuser.ovpn
+```
 
-# Check if port is listening
-sudo netstat -tuln | grep 1194
+### 4. Install OpenVPN Client
 
-# View logs
+#### Windows
+- Download OpenVPN GUI from https://openvpn.net/
+- Import the `.ovpn` file
+- Connect
+
+#### macOS
+- Install Tunnelblick from https://tunnelblick.net/
+- Import the `.ovpn` file
+- Connect
+
+#### Linux
+```bash
+sudo apt install openvpn
+sudo openvpn --config myuser.ovpn
+```
+
+#### Mobile
+- Install "OpenVPN Connect" app
+- Import the `.ovpn` file
+- Connect
+
+## Post-Installation
+
+### Check Status
+```bash
+sudo openvpn-manage status
+```
+
+### View Logs
+```bash
 sudo tail -f /var/log/openvpn/openvpn.log
 ```
 
-## 🆘 Quick Troubleshooting
-
-**Service won't start?**
+### Add More Users
 ```bash
-sudo journalctl -u openvpn@server.service -f
+sudo openvpn-manage add another_user
 ```
 
-**Authentication issues?**
+## Security Notes
+
+- The server uses strong encryption (AES-256-GCM)
+- Certificates are 4096-bit RSA
+- TLS 1.2+ is enforced
+- Perfect Forward Secrecy is enabled
+
+## Troubleshooting
+
+### Can't Connect?
+1. Check if service is running: `sudo systemctl status openvpn@server`
+2. Check firewall: `sudo ufw status`
+3. Check logs: `sudo tail -f /var/log/openvpn/openvpn.log`
+
+### Certificate Issues?
+1. Verify user exists: `sudo openvpn-manage list`
+2. Renew certificate: `sudo openvpn-manage renew username`
+
+## Management Commands
+
 ```bash
-sudo tail -f /var/log/openvpn/auth.log
+# List all users
+sudo openvpn-manage list
+
+# Add user
+sudo openvpn-manage add username
+
+# Remove user
+sudo openvpn-manage remove username
+
+# Renew user certificate
+sudo openvpn-manage renew username
+
+# Check server status
+sudo openvpn-manage status
+
+# Create backup
+sudo openvpn-manage backup
+
+# Restart service
+sudo openvpn-manage restart
 ```
 
-**Can't connect?**
-- Check firewall rules
-- Verify port 1194 is open
-- Check client configuration
+## File Locations
 
----
+- Server config: `/etc/openvpn/server.conf`
+- Client configs: `/etc/openvpn/clients/`
+- Logs: `/var/log/openvpn/`
+- Certificates: `/etc/openvpn/easy-rsa/pki/`
+- Backups: `/etc/openvpn/backup/`
 
-That's it! Your OpenVPN server with MFA is ready to use! 🎉
+## Next Steps
+
+1. Test the VPN connection
+2. Add additional users as needed
+3. Set up regular backups
+4. Monitor logs for security
+5. Consider setting up monitoring/alerting
+
+For detailed documentation, see `README.md`.

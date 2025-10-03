@@ -1,211 +1,319 @@
-# OpenVPN Server with MFA - Production Ready
+# OpenVPN Server Setup Script
 
-A comprehensive, production-ready OpenVPN server setup with Google Authenticator MFA integration.
+A comprehensive OpenVPN installation and management script for Ubuntu with best security practices and user management functionality.
 
-## 🚀 Features
+## Features
 
-- **Modern Security**: AES-256-GCM encryption, TLS 1.2+, strong ciphers
-- **MFA Integration**: Google Authenticator TOTP support
-- **User Management**: Easy user addition, removal, and certificate renewal
-- **Production Ready**: Systemd service, proper logging, error handling
-- **No Firewall**: External firewall configuration (you handle firewall rules)
-- **Best Practices**: Secure defaults, proper file permissions, comprehensive logging
+- **Secure Installation**: Implements industry best practices for OpenVPN security
+- **EasyRSA Integration**: Automated certificate authority setup
+- **User Management**: Add, remove, and renew VPN users easily
+- **Firewall Configuration**: Automatic UFW and iptables setup
+- **Client Configuration**: Automatic generation of client .ovpn files
+- **Backup System**: Built-in configuration backup functionality
+- **Monitoring**: Logging and status monitoring capabilities
 
-## 📋 Prerequisites
+## Security Features
 
-- Ubuntu 20.04+ or Debian 11+
-- Root access
-- External firewall (script doesn't configure UFW)
-- Internet connection for package installation
+- **Strong Encryption**: AES-256-GCM cipher with SHA512 authentication
+- **Perfect Forward Secrecy**: TLS-Crypt implementation
+- **Certificate Revocation**: CRL (Certificate Revocation List) support
+- **TLS 1.2+**: Minimum TLS version enforcement
+- **Strong DH Parameters**: 4096-bit Diffie-Hellman parameters
+- **ECDSA Support**: secp384r1 curve for enhanced security
 
-## 🛠️ Installation
+## Installation
 
-1. **Clone and setup**:
+### Prerequisites
+
+- Ubuntu 18.04+ (tested on Ubuntu 20.04 and 22.04)
+- Root or sudo access
+- Internet connection
+
+### Quick Installation
+
+```bash
+# Download and run the installation script
+wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup.sh
+chmod +x openvpn-server-setup.sh
+sudo ./openvpn-server-setup.sh
+```
+
+### Manual Installation
+
+```bash
+# Clone or download the script
+git clone https://github.com/your-repo/OpenVPNMFA.git
+cd OpenVPNMFA
+
+# Make executable and run
+chmod +x openvpn-server-setup.sh
+sudo ./openvpn-server-setup.sh
+```
+
+## Usage
+
+### Initial Setup
+
+1. **Install OpenVPN Server**:
    ```bash
-   git clone <your-repo>
-   cd OpenVPNMFA
-   chmod +x openvpn-server-setup.sh
+   sudo ./openvpn-server-setup.sh install
    ```
 
-2. **Run the installation**:
+2. **Add your first user**:
    ```bash
-   sudo ./openvpn-server-setup.sh
+   sudo openvpn-manage add username
    ```
 
-3. **Add your first user**:
+3. **Download client configuration**:
    ```bash
-   sudo openvpn-user-mgmt add <username>
+   # The .ovpn file will be created in /etc/openvpn/clients/
+   sudo cp /etc/openvpn/clients/username.ovpn ~/
    ```
 
-## 📁 Directory Structure
+### User Management
 
-```
-/etc/openvpn/
-├── server.conf          # Server configuration
-├── auth-script.sh       # Authentication script
-├── ca.crt               # Certificate Authority
-├── server.crt           # Server certificate
-├── server.key           # Server private key
-├── dh.pem               # Diffie-Hellman parameters
-├── ta.key               # TLS-auth key
-├── ipp.txt              # IP pool persistence
-└── easy-rsa/            # Easy-RSA directory
-    └── pki/             # PKI certificates
+The script includes a management tool at `/usr/local/bin/openvpn-manage`:
 
-/etc/openvpn/clients/     # Client configuration files
-/var/log/openvpn/        # Log files
-```
-
-## 👥 User Management
-
-### Add a new user:
+#### Add a new user
 ```bash
-sudo openvpn-user-mgmt add john
+sudo openvpn-manage add john_doe
 ```
 
-### Remove a user:
+#### Remove a user
 ```bash
-sudo openvpn-user-mgmt remove john
+sudo openvpn-manage remove john_doe
 ```
 
-### List all users:
+#### Renew user certificate
 ```bash
-sudo openvpn-user-mgmt list
+sudo openvpn-manage renew john_doe
 ```
 
-### Renew user certificate:
+#### List all users
 ```bash
-sudo openvpn-user-mgmt renew john
+sudo openvpn-manage list
 ```
 
-## 🔧 Service Management
-
-### Check service status:
+#### Check server status
 ```bash
-sudo systemctl status openvpn@server.service
+sudo openvpn-manage status
 ```
 
-### Restart service:
+#### Create backup
 ```bash
-sudo systemctl restart openvpn@server.service
+sudo openvpn-manage backup
 ```
 
-### View logs:
+#### Restart service
 ```bash
-# OpenVPN logs
+sudo openvpn-manage restart
+```
+
+## Configuration Details
+
+### Network Settings
+- **VPN Network**: 10.8.0.0/24
+- **Port**: 1194 (UDP)
+- **Protocol**: UDP
+- **DNS**: Google DNS (8.8.8.8, 8.8.4.4)
+
+### Security Configuration
+- **Cipher**: AES-256-GCM
+- **Authentication**: SHA512
+- **TLS Version**: 1.2+
+- **Key Size**: 4096 bits
+- **DH Parameters**: 4096 bits
+- **TLS-Crypt**: Enabled for additional security
+
+### File Locations
+- **Server Config**: `/etc/openvpn/server.conf`
+- **Certificates**: `/etc/openvpn/easy-rsa/pki/`
+- **Client Configs**: `/etc/openvpn/clients/`
+- **Logs**: `/var/log/openvpn/`
+- **Backups**: `/etc/openvpn/backup/`
+
+## Client Setup
+
+### Download Client Configuration
+After adding a user, download the `.ovpn` file:
+
+```bash
+# Copy the client configuration to your local machine
+sudo cp /etc/openvpn/clients/username.ovpn /home/user/
+sudo chown user:user /home/user/username.ovpn
+```
+
+### Client Installation
+
+#### Windows
+1. Download OpenVPN GUI from https://openvpn.net/
+2. Install and import the `.ovpn` file
+3. Connect to the VPN
+
+#### macOS
+1. Install Tunnelblick from https://tunnelblick.net/
+2. Import the `.ovpn` file
+3. Connect to the VPN
+
+#### Linux
+1. Install OpenVPN client:
+   ```bash
+   sudo apt install openvpn
+   ```
+2. Connect using the configuration:
+   ```bash
+   sudo openvpn --config username.ovpn
+   ```
+
+#### Mobile (Android/iOS)
+1. Install OpenVPN Connect app
+2. Import the `.ovpn` file
+3. Connect to the VPN
+
+## Firewall Configuration
+
+The script automatically configures:
+- UFW firewall rules
+- IP forwarding
+- NAT masquerading for VPN traffic
+- Port 1194/UDP access
+
+### Manual Firewall Rules
+If you need to add custom rules:
+
+```bash
+# Allow specific ports
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP
+sudo ufw allow 443/tcp   # HTTPS
+
+# Allow VPN port
+sudo ufw allow 1194/udp  # OpenVPN
+```
+
+## Monitoring and Troubleshooting
+
+### Check Server Status
+```bash
+sudo systemctl status openvpn@server
+sudo openvpn-manage status
+```
+
+### View Logs
+```bash
+# Server logs
 sudo tail -f /var/log/openvpn/openvpn.log
 
-# Authentication logs
-sudo tail -f /var/log/openvpn/auth.log
+# Status logs
+sudo tail -f /var/log/openvpn/openvpn-status.log
 ```
 
-## 🔒 Security Features
+### Common Issues
 
-- **Encryption**: AES-256-GCM with SHA256 authentication
-- **TLS**: Minimum TLS 1.2 with strong cipher suites
-- **MFA**: Google Authenticator TOTP integration
-- **Certificates**: 2048-bit RSA certificates
-- **Network**: Subnet topology (modern, recommended)
-- **Logging**: Comprehensive audit trail
+#### 1. Connection Refused
+- Check if OpenVPN service is running: `sudo systemctl status openvpn@server`
+- Verify firewall rules: `sudo ufw status`
+- Check if port 1194 is open: `sudo netstat -tulpn | grep 1194`
 
-## 📱 Client Setup
+#### 2. Certificate Issues
+- Verify certificates exist: `ls -la /etc/openvpn/easy-rsa/pki/issued/`
+- Check certificate validity: `openssl x509 -in /etc/openvpn/easy-rsa/pki/issued/username.crt -text -noout`
 
-1. **Download client config**: Located in `/etc/openvpn/clients/<username>.ovpn`
-2. **Install OpenVPN client** on your device
-3. **Import the .ovpn file**
-4. **Connect using**:
-   - Username: `<username>`
-   - Password: `<password><mfa_code>` (no space between password and MFA code)
+#### 3. Client Cannot Connect
+- Verify client configuration file
+- Check server IP address in client config
+- Ensure client has internet access
 
-## 🌐 Network Configuration
+## Backup and Recovery
 
-- **Server IP**: Automatically detected
-- **VPN Port**: 1194 (UDP)
-- **VPN Network**: 10.8.0.0/24
-- **Client IPs**: 10.8.0.4-10.8.0.254
-
-## 🔧 Firewall Configuration
-
-The script doesn't configure UFW. You need to configure your external firewall to allow:
-
-- **Inbound**: UDP port 1194 from anywhere
-- **Outbound**: All traffic (for VPN routing)
-
-Example UFW rules (if you want to use UFW):
+### Create Backup
 ```bash
-sudo ufw allow 1194/udp
-sudo ufw allow out on tun0
+sudo openvpn-manage backup
 ```
 
-## 📊 Monitoring
-
-### Check connected clients:
+### Restore from Backup
 ```bash
-sudo cat /var/log/openvpn/openvpn-status.log
+# Extract backup
+sudo tar -xzf /etc/openvpn/backup/openvpn-backup-YYYYMMDD-HHMMSS.tar.gz -C /tmp/
+
+# Restore PKI
+sudo cp -r /tmp/openvpn-backup-YYYYMMDD-HHMMSS/pki/* /etc/openvpn/easy-rsa/pki/
+
+# Restore server config
+sudo cp /tmp/openvpn-backup-YYYYMMDD-HHMMSS/server.conf /etc/openvpn/
+
+# Restart service
+sudo systemctl restart openvpn@server
 ```
 
-### Monitor authentication:
+## Security Best Practices
+
+1. **Regular Updates**: Keep the system and OpenVPN updated
+2. **Certificate Rotation**: Renew certificates annually
+3. **Monitor Logs**: Regularly check for suspicious activity
+4. **Backup Certificates**: Keep secure backups of CA and certificates
+5. **Firewall Rules**: Regularly audit firewall configuration
+6. **User Management**: Remove unused user accounts promptly
+
+## Advanced Configuration
+
+### Custom Server Configuration
+Edit `/etc/openvpn/server.conf` for custom settings:
+
 ```bash
-sudo tail -f /var/log/openvpn/auth.log
+sudo nano /etc/openvpn/server.conf
+sudo systemctl restart openvpn@server
 ```
 
-### Check service health:
+### Multiple Server Instances
+To run multiple OpenVPN servers:
+
 ```bash
-sudo systemctl status openvpn@server.service
+# Copy server configuration
+sudo cp /etc/openvpn/server.conf /etc/openvpn/server2.conf
+
+# Edit port and network settings
+sudo nano /etc/openvpn/server2.conf
+
+# Enable and start second server
+sudo systemctl enable openvpn@server2
+sudo systemctl start openvpn@server2
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
-### Service won't start:
+### Debug Mode
+Enable verbose logging by editing the server configuration:
+
 ```bash
-sudo journalctl -u openvpn@server.service -f
+sudo nano /etc/openvpn/server.conf
+# Change verb 3 to verb 6 for more detailed logs
+sudo systemctl restart openvpn@server
 ```
 
-### Authentication issues:
+### Test Configuration
 ```bash
-sudo tail -f /var/log/openvpn/auth.log
+# Test server configuration
+sudo openvpn --config /etc/openvpn/server.conf --test-crypto
+
+# Test client configuration
+sudo openvpn --config /path/to/client.ovpn --test-crypto
 ```
 
-### Network connectivity:
-```bash
-# Check if port is listening
-sudo netstat -tuln | grep 1194
+## Support
 
-# Check TUN interface
-ip link show tun0
-```
-
-## 📝 Configuration Files
-
-- **Server Config**: `/etc/openvpn/server.conf`
-- **Auth Script**: `/etc/openvpn/auth-script.sh`
-- **User Management**: `/usr/local/bin/openvpn-user-mgmt`
-
-## 🔄 Certificate Management
-
-- **CA Certificate**: 10-year validity
-- **Server Certificate**: 10-year validity
-- **Client Certificates**: 10-year validity
-- **Certificate Renewal**: Use `openvpn-user-mgmt renew <username>`
-
-## 📚 Additional Resources
-
-- [OpenVPN Documentation](https://openvpn.net/community-resources/)
-- [Google Authenticator](https://github.com/google/google-authenticator)
-- [Easy-RSA Documentation](https://github.com/OpenVPN/easy-rsa)
-
-## 🆘 Support
-
-For issues or questions:
+For issues and questions:
 1. Check the logs: `/var/log/openvpn/`
-2. Verify service status: `systemctl status openvpn@server.service`
-3. Test authentication: Check auth logs
-4. Verify network connectivity: Check firewall rules
+2. Verify configuration: `sudo openvpn --config /etc/openvpn/server.conf --test-crypto`
+3. Check system status: `sudo systemctl status openvpn@server`
 
-## 📄 License
+## License
 
-This project is open source. Use at your own risk in production environments.
+This script is provided as-is for educational and production use. Please review and test thoroughly before deploying in production environments.
 
----
+## Changelog
 
-**Note**: This setup is designed for production use with proper security practices. Always test in a safe environment first.
+- **v1.0**: Initial release with basic OpenVPN setup
+- **v1.1**: Added user management functionality
+- **v1.2**: Enhanced security configuration
+- **v1.3**: Added backup and monitoring features

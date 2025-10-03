@@ -618,18 +618,24 @@ USAGE
 
 read_passphrase() {
     local username="$1"
-    local password
-    local confirm
-    read -s -p "Enter password for ${username}: " password
-    echo
-    read -s -p "Confirm password: " confirm
-    echo
-    if [[ "$password" != "$confirm" ]]; then
-        error_exit "Passwords do not match"
+    local password="${OVPN_USER_PASSWORD:-}"
+
+    if [[ -z "$password" ]]; then
+        if ! read -rs -p "Enter password for ${username}: " password; then
+            echo
+            error_exit "Failed to read password input"
+        fi
+        echo
     fi
+
+    if [[ -z "$password" ]]; then
+        error_exit "Password cannot be empty"
+    fi
+
     if [[ ${#password} -lt 8 ]]; then
         log_warn "Password shorter than 8 characters"
     fi
+
     echo "$password"
 }
 

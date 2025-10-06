@@ -273,7 +273,7 @@ setup_easyrsa() {
     chown root:root pki/private/$SERVER_NAME.key || true
     # Allow OpenVPN group to read tls-crypt key after drop-privs
     chgrp "$OPENVPN_SYSTEM_GROUP" pki/ta.key || true
-    chmod 640 pki/ta.key || true
+    chmod 600 pki/ta.key || true
     # Public materials
     chmod 644 pki/ca.crt pki/issued/$SERVER_NAME.crt || true
 }
@@ -325,6 +325,8 @@ remote-cert-tls client
 # Drop privileges after reading keys
 user $OPENVPN_SYSTEM_USER
 group $OPENVPN_SYSTEM_GROUP
+persist-tun
+persist-key
 
 # Logging
 log-append $LOG_DIR/openvpn.log

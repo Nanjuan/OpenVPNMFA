@@ -310,10 +310,14 @@ EOF
     mkdir -p $LOG_DIR
     mkdir -p $CLIENT_DIR
     mkdir -p $BACKUP_DIR
-    
-    # Set proper permissions
-    chown openvpn:openvpn $LOG_DIR $CLIENT_DIR $BACKUP_DIR
-    chmod 755 $LOG_DIR $CLIENT_DIR $BACKUP_DIR
+
+    # Set secure ownership and permissions
+    # Use root:root to avoid dependency on an "openvpn" system user
+    chown root:root $LOG_DIR $BACKUP_DIR
+    chmod 755 $LOG_DIR $BACKUP_DIR
+    # Clients directory contains private keys; restrict access
+    chown root:root $CLIENT_DIR
+    chmod 700 $CLIENT_DIR
     
     success "OpenVPN server configuration completed"
 }

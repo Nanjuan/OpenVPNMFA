@@ -421,6 +421,9 @@ group $OPENVPN_SYSTEM_GROUP
 persist-tun
 persist-key
 
+# Temporary directory
+tmp-dir /var/run/openvpn-tmp
+
 # Logging
 log-append $LOG_DIR/openvpn.log
 verb 3
@@ -443,7 +446,8 @@ EOF
     mkdir -p $LOG_DIR
     mkdir -p $CLIENT_DIR
     mkdir -p $BACKUP_DIR
-
+    mkdir -p /var/run/openvpn-tmp
+    
     # Set secure ownership and permissions
     # Use root:root for backup; OpenVPN user owns logs to write
     chown root:root $BACKUP_DIR
@@ -457,6 +461,10 @@ EOF
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR
     chmod 755 $LOG_DIR
+    
+    # Set permissions for temporary directory
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
+    chmod 755 /var/run/openvpn-tmp
     
     success "OpenVPN server configuration completed"
 }

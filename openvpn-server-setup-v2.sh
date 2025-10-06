@@ -598,8 +598,14 @@ add_user() {
     cd $EASYRSA_DIR
     ./easyrsa --batch --req-cn="$username" build-client-full "$username" nopass
     
+    # Check if username/password authentication is enabled by looking at server config
+    local auth_method="certificate"
+    if grep -q "auth-user-pass" "$CLIENT_DIR"/*.ovpn 2>/dev/null || grep -q "plugin.*auth-pam" "$OPENVPN_DIR/$SERVER_NAME.conf" 2>/dev/null; then
+        auth_method="username_password"
+    fi
+    
     # Create system user if username/password authentication is enabled
-    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+    if [[ "$auth_method" == "username_password" ]]; then
         if ! id -u "$username" >/dev/null 2>&1; then
             useradd -m -s /bin/bash "$username"
             echo -n "Enter password for $username: "
@@ -638,7 +644,7 @@ mute 20
 CLIENT_EOF
 
     # Add auth-user-pass if username/password authentication is enabled
-    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+    if [[ "$auth_method" == "username_password" ]]; then
         cat >> "$CLIENT_DIR/$username.ovpn" << CLIENT_EOF
 auth-user-pass
 CLIENT_EOF

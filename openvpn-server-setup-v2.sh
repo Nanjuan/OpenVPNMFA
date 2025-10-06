@@ -227,6 +227,15 @@ setup_easyrsa() {
         error "EasyRSA setup failed - certificates not created"
         exit 1
     fi
+
+    # Set secure permissions on key material to work with user nobody/nogroup
+    chmod 600 pki/private/$SERVER_NAME.key || true
+    chown root:root pki/private/$SERVER_NAME.key || true
+    # Allow OpenVPN (nogroup) to read tls-crypt key after drop-privs
+    chmod 640 pki/ta.key || true
+    chown root:nogroup pki/ta.key || true
+    # Public materials
+    chmod 644 pki/ca.crt pki/issued/$SERVER_NAME.crt || true
 }
 
 # Configure OpenVPN server

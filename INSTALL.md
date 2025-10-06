@@ -1,8 +1,8 @@
-# OpenVPN Server Quick Installation Guide
+# OpenVPN Server v2.0 Quick Installation Guide
 
 ## Prerequisites
 
-- Ubuntu 18.04+ (tested on 20.04 and 22.04)
+- Ubuntu 20.04+ (24.04 LTS recommended)
 - Root or sudo access
 - Internet connection
 - At least 1GB RAM and 10GB disk space
@@ -12,12 +12,12 @@
 ### 1. Download and Install
 
 ```bash
-# Download the script
-wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup.sh
-chmod +x openvpn-server-setup.sh
+# Download the v2.0 script
+wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup-v2.sh
+chmod +x openvpn-server-setup-v2.sh
 
-# Run installation
-sudo ./openvpn-server-setup.sh
+# Run installation (will prompt for openvpn user password)
+sudo ./openvpn-server-setup-v2.sh
 ```
 
 ### 2. Add Your First User

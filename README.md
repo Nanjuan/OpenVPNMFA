@@ -1,16 +1,18 @@
-# OpenVPN Server Setup Script
+# OpenVPN Server Setup v2.0
 
-A comprehensive OpenVPN installation and management script for Ubuntu with best security practices and user management functionality.
+A comprehensive OpenVPN installation and management script for Ubuntu with latest security practices and user management functionality.
 
 ## Features
 
+- **Latest Version Support**: Ubuntu 24.04+ and OpenVPN 2.6.12+ compatible
 - **Secure Installation**: Implements industry best practices for OpenVPN security
-- **EasyRSA Integration**: Automated certificate authority setup
+- **Dedicated User**: Creates secure `openvpn` system user with proper permissions
+- **EasyRSA Integration**: Automated certificate authority setup with Easy-RSA 3.1.0+
 - **User Management**: Add, remove, and renew VPN users easily
-- **Firewall Configuration**: Automatic UFW and iptables setup
+- **Firewall Configuration**: Automatic UFW setup (no iptables-persistent conflicts)
 - **Client Configuration**: Automatic generation of client .ovpn files
 - **Backup System**: Built-in configuration backup functionality
-- **Monitoring**: Logging and status monitoring capabilities
+- **Monitoring**: Enhanced logging and status monitoring capabilities
 
 ## Security Features
 
@@ -25,17 +27,17 @@ A comprehensive OpenVPN installation and management script for Ubuntu with best 
 
 ### Prerequisites
 
-- Ubuntu 18.04+ (tested on Ubuntu 20.04 and 22.04)
+- Ubuntu 20.04+ (24.04 LTS recommended)
 - Root or sudo access
 - Internet connection
 
 ### Quick Installation
 
 ```bash
-# Download and run the installation script
-wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup.sh
-chmod +x openvpn-server-setup.sh
-sudo ./openvpn-server-setup.sh
+# Download and run the v2.0 installation script
+wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup-v2.sh
+chmod +x openvpn-server-setup-v2.sh
+sudo ./openvpn-server-setup-v2.sh
 ```
 
 ### Manual Installation
@@ -46,17 +48,17 @@ git clone https://github.com/your-repo/OpenVPNMFA.git
 cd OpenVPNMFA
 
 # Make executable and run
-chmod +x openvpn-server-setup.sh
-sudo ./openvpn-server-setup.sh
+chmod +x openvpn-server-setup-v2.sh
+sudo ./openvpn-server-setup-v2.sh
 ```
 
 ## Usage
 
 ### Initial Setup
 
-1. **Install OpenVPN Server**:
+1. **Install OpenVPN Server** (will prompt for openvpn user password):
    ```bash
-   sudo ./openvpn-server-setup.sh install
+   sudo ./openvpn-server-setup-v2.sh
    ```
 
 2. **Add your first user**:
@@ -67,7 +69,8 @@ sudo ./openvpn-server-setup.sh
 3. **Download client configuration**:
    ```bash
    # The .ovpn file will be created in /etc/openvpn/clients/
-   sudo cp /etc/openvpn/clients/username.ovpn ~/
+   sudo cp /etc/openvpn/clients/username.ovpn /tmp/
+   sudo chown $USER:$USER /tmp/username.ovpn
    ```
 
 ### User Management
@@ -99,6 +102,16 @@ sudo openvpn-manage list
 sudo openvpn-manage status
 ```
 
+#### View recent logs
+```bash
+sudo openvpn-manage logs
+```
+
+#### Test configuration
+```bash
+sudo openvpn-manage test
+```
+
 #### Create backup
 ```bash
 sudo openvpn-manage backup
@@ -107,6 +120,11 @@ sudo openvpn-manage backup
 #### Restart service
 ```bash
 sudo openvpn-manage restart
+```
+
+#### Quick status check
+```bash
+sudo openvpn-status
 ```
 
 ## Configuration Details
@@ -131,6 +149,8 @@ sudo openvpn-manage restart
 - **Client Configs**: `/etc/openvpn/clients/`
 - **Logs**: `/var/log/openvpn/`
 - **Backups**: `/etc/openvpn/backup/`
+- **Management**: `/usr/local/bin/openvpn-manage`
+- **Status**: `/usr/local/bin/openvpn-status`
 
 ## Client Setup
 
@@ -311,9 +331,21 @@ For issues and questions:
 
 This script is provided as-is for educational and production use. Please review and test thoroughly before deploying in production environments.
 
+## Files Included
+
+- **`openvpn-server-setup-v2.sh`** - Main installation script (v2.0)
+- **`openvpn-uninstall-v2.sh`** - Uninstall script with options
+- **`README.md`** - This comprehensive guide
+- **`INSTALL.md`** - Quick installation guide
+- **`QUICK_START_V2.md`** - Quick reference commands
+- **`REMOTE_DEPLOYMENT.md`** - Remote server deployment guide
+
 ## Changelog
 
-- **v1.0**: Initial release with basic OpenVPN setup
-- **v1.1**: Added user management functionality
-- **v1.2**: Enhanced security configuration
-- **v1.3**: Added backup and monitoring features
+- **v2.0**: Complete rewrite with latest Ubuntu/OpenVPN support
+  - Ubuntu 24.04+ and OpenVPN 2.6.12+ compatibility
+  - Dedicated `openvpn` system user with proper permissions
+  - Enhanced security with AES-256-GCM and TLS 1.2+
+  - Modern GPG key management (no apt-key errors)
+  - UFW-only firewall (no iptables-persistent conflicts)
+  - Comprehensive management tools and monitoring

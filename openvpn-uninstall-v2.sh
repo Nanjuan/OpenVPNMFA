@@ -27,6 +27,7 @@ require_root() {
 
 # Defaults
 PURGE_PACKAGES=false
+REMOVE_USER=false
 DRY_RUN=false
 
 OPENVPN_DIR="/etc/openvpn"
@@ -109,10 +110,11 @@ usage() {
     cat <<USAGE
 OpenVPN v2 Uninstall Script
 
-Usage: sudo ./openvpn-uninstall-v2.sh [--purge-packages] [--dry-run]
+Usage: sudo ./openvpn-uninstall-v2.sh [--purge-packages] [--remove-user] [--dry-run]
 
 Options:
   --purge-packages  Additionally remove openvpn and easy-rsa packages
+  --remove-user     Remove the dedicated openvpn user and its home
   --dry-run         Show what would be done without making changes
   -h, --help        Show this help
 USAGE
@@ -126,6 +128,9 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                ;;
+            --remove-user)
+                REMOVE_USER=true
                 ;;
             -h|--help)
                 usage
@@ -155,6 +160,9 @@ summarize_plan() {
         echo "- Purge packages: openvpn, easy-rsa"
     else
         echo "- Keep packages installed (use --purge-packages to remove)"
+    fi
+    if [[ "$REMOVE_USER" == true ]]; then
+        echo "- Remove user 'openvpn' and its home directory"
     fi
 }
 
@@ -195,6 +203,18 @@ main() {
 
     # Optionally purge packages
     purge_packages_if_requested
+
+    # Optionally remove dedicated user
+    if [[ "$REMOVE_USER" == true ]]; then
+        if id -u openvpn >/dev/null 2>&1; then
+            info "Removing user 'openvpn'..."
+            userdel -r openvpn 2>/dev/null || true
+        fi
+        if getent group openvpn >/dev/null 2>&1; then
+            info "Removing group 'openvpn'..."
+            groupdel openvpn 2>/dev/null || true
+        fi
+    fi
 
     log "OpenVPN v2 uninstall completed"
 }

@@ -29,6 +29,8 @@ CLIENT_DIR="/etc/openvpn/clients"
 LOG_DIR="/var/log/openvpn"
 BACKUP_DIR="/etc/openvpn/backup"
 SCRIPT_DIR="/usr/local/bin"
+OPENVPN_SYSTEM_USER="openvpn"
+OPENVPN_SYSTEM_GROUP="openvpn"
 
 # Network configuration
 VPN_NETWORK="10.8.0.0"
@@ -83,6 +85,44 @@ check_root() {
     if [[ $EUID -ne 0 ]]; then
         error "This script must be run as root"
         exit 1
+    fi
+}
+
+# Create dedicated system user for OpenVPN
+create_openvpn_user() {
+    log "Creating OpenVPN system user ($OPENVPN_SYSTEM_USER)..."
+
+    if id -u "$OPENVPN_SYSTEM_USER" >/dev/null 2>&1; then
+        info "User $OPENVPN_SYSTEM_USER already exists"
+    else
+        # Create group and user
+        getent group "$OPENVPN_SYSTEM_GROUP" >/dev/null 2>&1 || groupadd -r "$OPENVPN_SYSTEM_GROUP"
+        useradd -m -s /bin/bash -g "$OPENVPN_SYSTEM_GROUP" -G "$OPENVPN_SYSTEM_GROUP" "$OPENVPN_SYSTEM_USER"
+
+        # Prompt for password
+        echo -n "Enter password for $OPENVPN_SYSTEM_USER: "
+        read -s OPENVPN_USER_PASS
+        echo
+        echo -n "Confirm password: "
+        read -s OPENVPN_USER_PASS2
+        echo
+        if [[ "$OPENVPN_USER_PASS" != "$OPENVPN_USER_PASS2" ]]; then
+            error "Passwords do not match"
+            exit 1
+        fi
+        echo "$OPENVPN_SYSTEM_USER:$OPENVPN_USER_PASS" | chpasswd
+        unset OPENVPN_USER_PASS OPENVPN_USER_PASS2
+
+        success "User $OPENVPN_SYSTEM_USER created"
+    fi
+
+    # Ensure ssh group exists and add user to it (if group not present, create it)
+    if getent group ssh >/dev/null 2>&1; then
+        usermod -aG ssh "$OPENVPN_SYSTEM_USER"
+    else
+        info "Group 'ssh' not found; creating and adding user"
+        groupadd ssh
+        usermod -aG ssh "$OPENVPN_SYSTEM_USER"
     fi
 }
 
@@ -228,12 +268,12 @@ setup_easyrsa() {
         exit 1
     fi
 
-    # Set secure permissions on key material to work with user nobody/nogroup
+    # Set secure permissions on key material to work with user $OPENVPN_SYSTEM_USER
     chmod 600 pki/private/$SERVER_NAME.key || true
     chown root:root pki/private/$SERVER_NAME.key || true
-    # Allow OpenVPN (nogroup) to read tls-crypt key after drop-privs
+    # Allow OpenVPN group to read tls-crypt key after drop-privs
+    chgrp "$OPENVPN_SYSTEM_GROUP" pki/ta.key || true
     chmod 640 pki/ta.key || true
-    chown root:nogroup pki/ta.key || true
     # Public materials
     chmod 644 pki/ca.crt pki/issued/$SERVER_NAME.crt || true
 }
@@ -283,8 +323,8 @@ tls-crypt $EASYRSA_DIR/pki/ta.key
 remote-cert-tls client
 
 # Drop privileges after reading keys
-user nobody
-group nogroup
+user $OPENVPN_SYSTEM_USER
+group $OPENVPN_SYSTEM_GROUP
 
 # Logging
 log-append $LOG_DIR/openvpn.log
@@ -310,7 +350,7 @@ EOF
     mkdir -p $BACKUP_DIR
 
     # Set secure ownership and permissions
-    # Use root:root for dirs; allow OpenVPN (nobody:nogroup) to write logs/status
+    # Use root:root for backup; OpenVPN user owns logs to write
     chown root:root $BACKUP_DIR
     chmod 755 $BACKUP_DIR
     chown root:root $CLIENT_DIR
@@ -319,8 +359,8 @@ EOF
     # Prepare log directory and files with correct ownership for runtime user
     mkdir -p $LOG_DIR
     touch $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
-    chown nobody:nogroup $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
-    chown root:root $LOG_DIR
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR
     chmod 755 $LOG_DIR
     
     success "OpenVPN server configuration completed"
@@ -703,6 +743,8 @@ install_openvpn_server() {
     detect_system
     update_system
     install_openvpn
+    # Create dedicated runtime user and prompt for password before configuring files
+    create_openvpn_user
     setup_easyrsa
     configure_openvpn
     configure_firewall

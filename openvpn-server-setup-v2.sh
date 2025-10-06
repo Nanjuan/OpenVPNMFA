@@ -243,6 +243,7 @@ configure_openvpn() {
 port $VPN_PORT
 proto $VPN_PROTOCOL
 dev tun
+topology subnet
 
 # Certificate and key files
 ca $EASYRSA_DIR/pki/ca.crt
@@ -261,21 +262,20 @@ push "dhcp-option DNS 8.8.8.8"
 push "dhcp-option DNS 8.8.4.4"
 
 # Security settings (OpenSSL 3.0+ compatible)
-cipher $CIPHER
+data-ciphers AES-256-GCM:AES-128-GCM
+data-ciphers-fallback AES-256-GCM
 auth $AUTH
 tls-version-min $TLS_VERSION
-tls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-RSA-WITH-AES-256-CBC-SHA384
 
 # Perfect Forward Secrecy
 tls-crypt $EASYRSA_DIR/pki/ta.key
 
 # Additional security
 remote-cert-tls client
-tls-auth $EASYRSA_DIR/pki/ta.key 0
-key-direction 0
 
-# Compression (deprecated in OpenVPN 2.6+, but kept for compatibility)
-comp-lzo
+# Drop privileges after reading keys
+user nobody
+group nogroup
 
 # Logging
 log-append $LOG_DIR/openvpn.log
@@ -293,17 +293,6 @@ keepalive 10 120
 explicit-exit-notify 1
 tls-server
 tls-version-min 1.2
-
-# OpenSSL 3.0+ compatibility
-tls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-RSA-WITH-AES-256-CBC-SHA384
-
-# Additional hardening for latest versions
-tls-version-min 1.2
-tls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384
-
-# Modern security features
-tls-version-min 1.2
-tls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384
 EOF
 
     # Create directories
@@ -312,12 +301,18 @@ EOF
     mkdir -p $BACKUP_DIR
 
     # Set secure ownership and permissions
-    # Use root:root to avoid dependency on an "openvpn" system user
-    chown root:root $LOG_DIR $BACKUP_DIR
-    chmod 755 $LOG_DIR $BACKUP_DIR
-    # Clients directory contains private keys; restrict access
+    # Use root:root for dirs; allow OpenVPN (nobody:nogroup) to write logs/status
+    chown root:root $BACKUP_DIR
+    chmod 755 $BACKUP_DIR
     chown root:root $CLIENT_DIR
     chmod 700 $CLIENT_DIR
+    
+    # Prepare log directory and files with correct ownership for runtime user
+    mkdir -p $LOG_DIR
+    touch $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
+    chown nobody:nogroup $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
+    chown root:root $LOG_DIR
+    chmod 755 $LOG_DIR
     
     success "OpenVPN server configuration completed"
 }

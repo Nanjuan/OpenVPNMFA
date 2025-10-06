@@ -137,7 +137,8 @@ install_openvpn() {
     log "Installing OpenVPN and dependencies..."
     
     # Try Ubuntu repositories first (most reliable)
-    if apt install -y openvpn easy-rsa ufw iptables-persistent; then
+    # Note: Avoid iptables-persistent due to conflicts with UFW on newer Ubuntu
+    if apt install -y openvpn easy-rsa ufw; then
         success "Installed OpenVPN from Ubuntu repositories"
         
         # Get version information
@@ -169,7 +170,7 @@ install_openvpn() {
         fi
         
         apt update
-        apt install -y openvpn easy-rsa ufw iptables-persistent
+        apt install -y openvpn easy-rsa ufw
         
         # Clean up
         rm -f /tmp/openvpn-repo.gpg
@@ -330,16 +331,40 @@ configure_firewall() {
     # Allow OpenVPN port
     ufw allow $VPN_PORT/$VPN_PROTOCOL
     
-    # Configure IP forwarding
-    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
-    sysctl -p
-    
-    # Configure NAT for VPN traffic
-    iptables -t nat -A POSTROUTING -s $VPN_NETWORK/24 -o $(ip route | grep default | awk '{print $5}') -j MASQUERADE
-    
-    # Save iptables rules
-    iptables-save > /etc/iptables/rules.v4
-    
+    # Configure IP forwarding via UFW (do not duplicate entries)
+    if grep -q '^#net/ipv4/ip_forward' /etc/ufw/sysctl.conf 2>/dev/null; then
+        sed -i 's/^#net\/ipv4\/ip_forward=.*/net.ipv4.ip_forward=1/' /etc/ufw/sysctl.conf || true
+    fi
+    if ! grep -q '^net.ipv4.ip_forward=1' /etc/ufw/sysctl.conf 2>/dev/null; then
+        echo 'net.ipv4.ip_forward=1' >> /etc/ufw/sysctl.conf
+    fi
+
+    # Ensure UFW default forward policy is ACCEPT
+    if grep -q '^DEFAULT_FORWARD_POLICY=' /etc/default/ufw 2>/dev/null; then
+        sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+    else
+        echo 'DEFAULT_FORWARD_POLICY="ACCEPT"' >> /etc/default/ufw
+    fi
+
+    # Add MASQUERADE rule to UFW before.rules if not present
+    if ! grep -q 'OPENVPN NAT RULES' /etc/ufw/before.rules 2>/dev/null; then
+        cat << 'UFWEOF' >> /etc/ufw/before.rules
+*nat
+:POSTROUTING ACCEPT [0:0]
+# OPENVPN NAT RULES
+-A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
+COMMIT
+UFWEOF
+        # Replace hardcoded interface with detected default interface
+        IFACE=$(ip route | awk '/^default/ {print $5; exit}')
+        if [[ -n "${IFACE}" ]]; then
+            sed -i "s/-o eth0/-o ${IFACE}/" /etc/ufw/before.rules
+        fi
+    fi
+
+    # Reload UFW to apply changes
+    ufw --force reload
+
     success "Firewall configuration completed"
 }
 

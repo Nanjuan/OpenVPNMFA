@@ -82,9 +82,16 @@ remove_files_and_dirs() {
     rm -rf "$BACKUP_DIR" 2>/dev/null || true
     # Logs
     rm -rf "$LOG_DIR" 2>/dev/null || true
+    # Temporary directory
+    rm -rf "/var/run/openvpn-tmp" 2>/dev/null || true
+    # PAM authentication files
+    rm -f "/etc/pam.d/openvpn" 2>/dev/null || true
+    rm -f "$OPENVPN_DIR/auth-script.sh" 2>/dev/null || true
     # Helper scripts
     rm -f "$SCRIPT_DIR/openvpn-manage" 2>/dev/null || true
     rm -f "$SCRIPT_DIR/openvpn-status" 2>/dev/null || true
+    # Remove entire OpenVPN directory if empty
+    rmdir "$OPENVPN_DIR" 2>/dev/null || true
 }
 
 remove_repos_and_keys() {
@@ -98,7 +105,7 @@ remove_repos_and_keys() {
 purge_packages_if_requested() {
     if [[ "$PURGE_PACKAGES" == true ]]; then
         info "Purging OpenVPN-related packages..."
-        apt purge -y openvpn easy-rsa 2>/dev/null || true
+        apt purge -y openvpn easy-rsa libpam-google-authenticator 2>/dev/null || true
         # Optionally purge iptables-persistent rules created by us
         # Do not purge ufw, fail2ban, unattended-upgrades by default as they may be system-wide
         apt autoremove -y 2>/dev/null || true
@@ -151,13 +158,15 @@ summarize_plan() {
     echo "Planned actions:"
     echo "- Stop and disable systemd service openvpn@${SERVER_NAME}"
     echo "- Remove server config, PKI, clients, backups, logs"
+    echo "- Remove temporary directory /var/run/openvpn-tmp"
+    echo "- Remove PAM authentication files (/etc/pam.d/openvpn, auth-script.sh)"
     echo "- Remove helper scripts from ${SCRIPT_DIR}"
     echo "- Remove UFW rule 1194/udp if present"
     echo "- Delete iptables MASQUERADE rule for ${VPN_NETWORK}"
     echo "- Revert net.ipv4.ip_forward sysctl change"
     echo "- Remove OpenVPN repo list and key (if present)"
     if [[ "$PURGE_PACKAGES" == true ]]; then
-        echo "- Purge packages: openvpn, easy-rsa"
+        echo "- Purge packages: openvpn, easy-rsa, libpam-google-authenticator"
     else
         echo "- Keep packages installed (use --purge-packages to remove)"
     fi

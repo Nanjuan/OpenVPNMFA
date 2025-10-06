@@ -53,6 +53,9 @@ OPENVPN_VERSION=""
 OPENSSL_VERSION=""
 EASYRSA_VERSION=""
 
+# Authentication method
+AUTH_METHOD="certificate"  # "certificate" or "username_password"
+
 # Logging functions
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
@@ -86,6 +89,44 @@ check_root() {
         error "This script must be run as root"
         exit 1
     fi
+}
+
+# Select authentication method
+select_auth_method() {
+    echo ""
+    header "Authentication Method Selection"
+    echo "Choose how users will authenticate to the VPN:"
+    echo ""
+    echo "1) Certificate Only (Recommended)"
+    echo "   - Most secure method"
+    echo "   - Each user gets a unique certificate"
+    echo "   - No username/password required"
+    echo "   - Users connect with .ovpn file only"
+    echo ""
+    echo "2) Certificate + Username/Password (Two-Factor)"
+    echo "   - Maximum security"
+    echo "   - Users need both certificate AND username/password"
+    echo "   - Requires PAM authentication setup"
+    echo ""
+    
+    while true; do
+        read -p "Select authentication method (1 or 2): " choice
+        case $choice in
+            1)
+                AUTH_METHOD="certificate"
+                log "Selected: Certificate-only authentication"
+                break
+                ;;
+            2)
+                AUTH_METHOD="username_password"
+                log "Selected: Certificate + Username/Password authentication"
+                break
+                ;;
+            *)
+                warning "Please enter 1 or 2"
+                ;;
+        esac
+    done
 }
 
 # Create dedicated system user for OpenVPN
@@ -219,6 +260,12 @@ install_openvpn() {
     # Install additional security tools
     apt install -y fail2ban unattended-upgrades
     
+    # Install PAM authentication if username/password method selected
+    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+        apt install -y libpam-google-authenticator
+        log "PAM authentication tools installed"
+    fi
+    
     # Verify installation
     if command -v openvpn &> /dev/null; then
         success "OpenVPN installation completed"
@@ -278,6 +325,37 @@ setup_easyrsa() {
     chmod 644 pki/ca.crt pki/issued/$SERVER_NAME.crt || true
 }
 
+# Setup PAM authentication
+setup_pam_auth() {
+    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+        log "Setting up PAM authentication..."
+        
+        # Create PAM configuration for OpenVPN
+        cat > /etc/pam.d/openvpn << EOF
+# OpenVPN PAM configuration
+auth required pam_unix.so
+account required pam_unix.so
+session required pam_unix.so
+EOF
+        
+        # Create auth script
+        cat > $OPENVPN_DIR/auth-script.sh << 'AUTH_EOF'
+#!/bin/bash
+# OpenVPN PAM authentication script
+
+# Read username and password from environment
+USERNAME="$1"
+PASSWORD="$2"
+
+# Authenticate using PAM
+echo "$PASSWORD" | /usr/bin/pamtester openvpn "$USERNAME" authenticate
+AUTH_EOF
+        
+        chmod +x $OPENVPN_DIR/auth-script.sh
+        success "PAM authentication configured"
+    fi
+}
+
 # Configure OpenVPN server
 configure_openvpn() {
     log "Configuring OpenVPN server..."
@@ -321,6 +399,21 @@ tls-crypt $EASYRSA_DIR/pki/ta.key
 
 # Additional security
 remote-cert-tls client
+EOF
+
+    # Add PAM authentication if selected
+    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+        cat >> $OPENVPN_DIR/$SERVER_NAME.conf << EOF
+
+# PAM Authentication
+plugin /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so openvpn
+verify-client-cert none
+username-as-common-name
+EOF
+    fi
+
+    # Add common settings
+    cat >> $OPENVPN_DIR/$SERVER_NAME.conf << EOF
 
 # Drop privileges after reading keys
 user $OPENVPN_SYSTEM_USER
@@ -505,6 +598,28 @@ add_user() {
     cd $EASYRSA_DIR
     ./easyrsa --batch --req-cn="$username" build-client-full "$username" nopass
     
+    # Create system user if username/password authentication is enabled
+    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+        if ! id -u "$username" >/dev/null 2>&1; then
+            useradd -m -s /bin/bash "$username"
+            echo -n "Enter password for $username: "
+            read -s USER_PASS
+            echo
+            echo -n "Confirm password: "
+            read -s USER_PASS2
+            echo
+            if [[ "$USER_PASS" != "$USER_PASS2" ]]; then
+                error "Passwords do not match"
+                return 1
+            fi
+            echo "$username:$USER_PASS" | chpasswd
+            unset USER_PASS USER_PASS2
+            success "System user $username created"
+        else
+            info "System user $username already exists"
+        fi
+    fi
+    
     # Generate client configuration
     local server_ip=$(curl -s ifconfig.me)
     cat > "$CLIENT_DIR/$username.ovpn" << CLIENT_EOF
@@ -520,6 +635,16 @@ cipher AES-256-GCM
 auth SHA512
 verb 3
 mute 20
+CLIENT_EOF
+
+    # Add auth-user-pass if username/password authentication is enabled
+    if [[ "$AUTH_METHOD" == "username_password" ]]; then
+        cat >> "$CLIENT_DIR/$username.ovpn" << CLIENT_EOF
+auth-user-pass
+CLIENT_EOF
+    fi
+
+    cat >> "$CLIENT_DIR/$username.ovpn" << CLIENT_EOF
 
 <ca>
 $(cat $EASYRSA_DIR/pki/ca.crt)
@@ -743,11 +868,13 @@ install_openvpn_server() {
     check_root
     show_header
     detect_system
+    select_auth_method
     update_system
     install_openvpn
     # Create dedicated runtime user and prompt for password before configuring files
     create_openvpn_user
     setup_easyrsa
+    setup_pam_auth
     configure_openvpn
     configure_firewall
     configure_systemd

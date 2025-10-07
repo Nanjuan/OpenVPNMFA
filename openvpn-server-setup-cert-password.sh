@@ -2,16 +2,15 @@
 #
 # OpenVPN Server Setup - Username/Password Only (no client certs)
 # Ubuntu 20.04/22.04/24.04/24.10 + OpenVPN 2.6.x
-# - Installs OpenVPN + Easy-RSA + UFW
-# - Server requires ONLY username/password via PAM (pam_unix)
+# - PAM (pam_unix) auth only (verify-client-cert none)
 # - Correct systemd unit: openvpn-server@server
-# - Fixes UFW NAT placement & reload
-# - Persists /var/run/openvpn-tmp via tmpfiles.d
-# - Generates client profiles that avoid “Missing external certificate”
+# - Uses AppArmor-allowed tmp dir: /run/openvpn  (Fix A)
+# - Idempotent UFW/NAT configuration and reload
+# - Generates client profiles with setenv CLIENT_CERT 0 to avoid external-cert prompt
 #
 set -euo pipefail
 
-SCRIPT_VERSION="3.1-userpass"
+SCRIPT_VERSION="3.2-userpass"
 SCRIPT_DATE="2025-10-07"
 
 # ---------- UI ----------
@@ -27,7 +26,7 @@ SERVER_DIR="/etc/openvpn/server"
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
 CLIENT_DIR="/etc/openvpn/clients"
 LOG_DIR="/var/log/openvpn"
-RUN_DIR="/var/run/openvpn-tmp"
+RUN_DIR="/run/openvpn"               # <-- AppArmor-allowed tmp path (Fix A)
 
 SERVER_NAME="server"
 VPN_NETWORK="10.8.0.0"
@@ -36,7 +35,7 @@ VPN_PORT="1194"
 VPN_PROTO="udp"
 
 DATA_CIPHERS="AES-256-GCM:AES-128-GCM"
-AUTH_DIGEST="SHA512"          # control-channel HMAC; data-channel is AEAD
+AUTH_DIGEST="SHA512"                 # control-channel HMAC; data-channel uses AEAD
 TLS_VERSION_MIN="1.2"
 
 OPENVPN_USER="openvpn"
@@ -58,17 +57,14 @@ detect_pam_plugin() {
   echo "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
 }
 
-default_iface() {
-  ip -4 route list default | awk '{print $5; exit}'
-}
+default_iface() { ip -4 route list default | awk '{print $5; exit}'; }
 
-# Insert a single NAT block before the first *filter section. Restorable on failure.
+# Insert a single NAT block before the first *filter section. Idempotent.
 ensure_nat_block() {
   local br="/etc/ufw/before.rules"
   local bkp="/etc/ufw/before.rules.bak.$(date +%s)"
   local iface="${1:-$(default_iface)}"; [[ -n "$iface" ]] || iface="eth0"
 
-  # If our block already exists, just make sure iface is correct
   if grep -q 'OPENVPN NAT RULES' "$br" 2>/dev/null; then
     sed -i "s/^\(-A POSTROUTING -s 10\.8\.0\.0\/24 -o \).* -j MASQUERADE/\1${iface} -j MASQUERADE/" "$br"
     return 0
@@ -76,7 +72,6 @@ ensure_nat_block() {
 
   cp -a "$br" "$bkp"
 
-  # Build new file without prior OPENVPN NAT RULES (defensive), then inject
   awk '
     BEGIN { skip=0 }
     /# OPENVPN NAT RULES/ { skip=1 }
@@ -116,7 +111,7 @@ else
   log "User '${OPENVPN_USER}' already present."
 fi
 
-# ---------- Easy-RSA PKI (server-only TLS) ----------
+# ---------- Easy-RSA PKI (server TLS only) ----------
 log "Setting up Easy-RSA PKI for server..."
 rm -rf "$EASYRSA_DIR"
 mkdir -p "$EASYRSA_DIR"
@@ -127,7 +122,7 @@ pushd "$EASYRSA_DIR" >/dev/null
 EASYRSA_BATCH=1 ./easyrsa build-ca nopass
 EASYRSA_BATCH=1 ./easyrsa build-server-full "$SERVER_NAME" nopass
 EASYRSA_BATCH=1 ./easyrsa gen-dh
-# New syntax (no deprecation warning)
+# New syntax (avoids deprecation warning)
 openvpn --genkey secret pki/ta.key
 
 chmod 600 "pki/private/${SERVER_NAME}.key" "pki/ta.key" || true
@@ -143,11 +138,11 @@ chown "$OPENVPN_USER:$OPENVPN_GROUP" "$OPENVPN_DIR/ipp.txt"
 chmod 755 "$LOG_DIR"
 chmod 770 "$RUN_DIR"
 
-# Persist tmp dir across reboots
-cat >/etc/tmpfiles.d/openvpn-tmp.conf <<EOF
+# Persist /run/openvpn across boots
+cat >/etc/tmpfiles.d/openvpn-run.conf <<EOF
 d $RUN_DIR 0770 $OPENVPN_USER $OPENVPN_GROUP -
 EOF
-systemd-tmpfiles --create /etc/tmpfiles.d/openvpn-tmp.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/openvpn-run.conf
 
 # ---------- PAM (password auth only) ----------
 log "Writing /etc/pam.d/openvpn ..."
@@ -231,7 +226,6 @@ fi
 
 IFACE="$(default_iface)"; [[ -n "$IFACE" ]] || IFACE="eth0"
 ensure_nat_block "$IFACE"
-# Validate reload; if this fails, restore backup inside ensure_nat_block would not help, so we exit with context
 if ! ufw --force reload; then
   err "UFW reload failed. Check /etc/ufw/before.rules for NAT syntax and interface '$IFACE'."
   exit 1
@@ -277,7 +271,7 @@ usage(){
   echo "  status             - Service status + connected clients count"
   echo "  restart            - Restart service"
   echo "  logs               - Tail server log"
-  echo "  fixperms           - Fix /var/run and /var/log perms"
+  echo "  fixperms           - Fix /run and /var/log perms"
 }
 
 server_ip(){ curl -fsS ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -354,10 +348,10 @@ status_srv(){
 }
 
 fixperms(){
-  mkdir -p /var/log/openvpn /var/run/openvpn-tmp
-  chown -R "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn /var/run/openvpn-tmp
+  mkdir -p /var/log/openvpn /run/openvpn
+  chown -R "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn /run/openvpn
   chmod 755 /var/log/openvpn
-  chmod 770 /var/run/openvpn-tmp
+  chmod 770 /run/openvpn
   touch /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
   chown "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
   systemctl restart "$UNIT"

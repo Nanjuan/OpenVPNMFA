@@ -1,27 +1,29 @@
 #!/bin/bash
 #
-# OpenVPN Server Setup - Username/Password only (no client certs)
+# OpenVPN Server Setup - Username/Password only (no client certs for clients)
 # Ubuntu 20.04/22.04/24.04/24.10 + OpenVPN 2.6.x
 #
-# - PAM (pam_unix) auth (system accounts)
-# - tmp-dir is /run/openvpn-server/tmp (systemd creates + allows writes)
-# - UFW + NAT (idempotent)
-# - Management: openvpn-manage / openvpn-status
-# - Server log verbosity: verb 6
+# Key points:
+# - PAM (pam_unix) authentication for system users
+# - tmp files in /tmp AND systemd sandbox explicitly allows /tmp
+# - Do NOT change systemd User= (OpenVPN must start as root to read private key)
+# - Verbose logging (verb 6)
+# - UFW + NAT, auto-detect default egress interface
+# - Management helpers: openvpn-manage, openvpn-status
 #
 set -euo pipefail
 
-SCRIPT_VERSION="4.0-userpass"
+SCRIPT_VERSION="4.1-userpass"
 SCRIPT_DATE="2025-10-07"
 
-# ---------- UI ----------
+# ----- UI helpers -----
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log(){ echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $*${NC}"; }
 warn(){ echo -e "${YELLOW}[WARN] $*${NC}"; }
 err(){ echo -e "${RED}[ERROR] $*${NC}" >&2; }
 trap 'err "Install failed on line $LINENO"' ERR
 
-# ---------- Config ----------
+# ----- Config -----
 OPENVPN_DIR="/etc/openvpn"
 SERVER_DIR="/etc/openvpn/server"
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
@@ -41,7 +43,7 @@ TLS_VERSION_MIN="1.2"
 OPENVPN_USER="openvpn"
 OPENVPN_GROUP="openvpn"
 
-# ---------- Helpers ----------
+# ----- Helpers -----
 detect_pam_plugin() {
   local p
   for p in \
@@ -51,13 +53,13 @@ detect_pam_plugin() {
     /usr/lib/openvpn/plugins/auth-pam.so; do
     [[ -f "$p" ]] && { echo "$p"; return; }
   done
-  echo "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
+  echo ""
 }
 
 default_iface(){ ip -4 route list default | awk '{print $5; exit}'; }
+server_ip(){ curl -fsS ifconfig.me || hostname -I | awk '{print $1}'; }
 
 ensure_nat_block() {
-  # idempotently add a NAT section with MASQUERADE on the detected interface
   local br="/etc/ufw/before.rules"
   local bkp="/etc/ufw/before.rules.bak.$(date +%s)"
   local iface="${1:-$(default_iface)}"; [[ -n "$iface" ]] || iface="eth0"
@@ -92,25 +94,23 @@ ensure_nat_block() {
   rm -f "${br}.tmp"
 }
 
-server_ip(){ curl -fsS ifconfig.me || hostname -I | awk '{print $1}'; }
-
-# ---------- Pre-check ----------
+# ----- Pre-check -----
 [[ $EUID -eq 0 ]] || { err "Run as root"; exit 1; }
 log "OpenVPN User/Pass Setup v${SCRIPT_VERSION} (${SCRIPT_DATE})"
 
-# ---------- Packages ----------
+# ----- Packages -----
 log "Updating packages and installing dependencies..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
 apt-get install -y openvpn easy-rsa ufw curl ca-certificates lsb-release
 
-# ---------- Service account ----------
+# ----- Service account -----
 log "Ensuring service user '${OPENVPN_USER}' exists..."
 getent passwd "$OPENVPN_USER" >/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin --user-group "$OPENVPN_USER"
 getent group "$OPENVPN_GROUP" >/dev/null || groupadd --system "$OPENVPN_GROUP"
 
-# ---------- Easy-RSA PKI (server TLS only) ----------
+# ----- Easy-RSA PKI (server TLS only) -----
 log "Setting up Easy-RSA PKI for server..."
 rm -rf "$EASYRSA_DIR"
 mkdir -p "$EASYRSA_DIR"
@@ -125,7 +125,7 @@ chmod 600 "pki/private/${SERVER_NAME}.key" "pki/ta.key" || true
 chmod 644 "pki/ca.crt" "pki/issued/${SERVER_NAME}.crt" || true
 popd >/dev/null
 
-# ---------- Directories & permissions ----------
+# ----- Dirs & permissions -----
 log "Creating directories and setting permissions..."
 mkdir -p "$SERVER_DIR" "$CLIENT_DIR" "$LOG_DIR"
 touch "$LOG_DIR/openvpn.log" "$LOG_DIR/openvpn-status.log" "$OPENVPN_DIR/ipp.txt"
@@ -133,7 +133,7 @@ chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
 chown "$OPENVPN_USER:$OPENVPN_GROUP" "$OPENVPN_DIR/ipp.txt"
 
-# ---------- PAM (password auth only) ----------
+# ----- PAM config -----
 log "Writing /etc/pam.d/openvpn ..."
 cat >/etc/pam.d/openvpn <<'PAM'
 # OpenVPN PAM configuration - local UNIX passwords
@@ -141,9 +141,11 @@ auth    required        pam_unix.so
 account required        pam_unix.so
 PAM
 
-# ---------- Server configuration ----------
+# ----- Server configuration -----
 PAM_PLUGIN="$(detect_pam_plugin)"
+[[ -n "$PAM_PLUGIN" ]] || { err "PAM plugin not found. Is OpenVPN installed?"; exit 1; }
 log "Using PAM plugin: $PAM_PLUGIN"
+
 log "Writing server config to $SERVER_DIR/${SERVER_NAME}.conf ..."
 cat >"$SERVER_DIR/${SERVER_NAME}.conf" <<EOF
 port $VPN_PORT
@@ -184,8 +186,8 @@ group $OPENVPN_GROUP
 persist-tun
 persist-key
 
-# Temp directory for PAM deferred-auth files (systemd allows this path)
-tmp-dir /run/openvpn-server/tmp
+# Temp files for PAM deferred-auth (use /tmp; systemd override allows it)
+tmp-dir /tmp
 
 # Logging
 log-append $LOG_DIR/openvpn.log
@@ -198,25 +200,19 @@ explicit-exit-notify 1
 tls-server
 EOF
 
-# ---------- Systemd drop-in (runtime dir + sandbox write paths) ----------
+# ----- Systemd drop-in: allow /tmp inside sandbox -----
 log "Creating systemd override..."
 mkdir -p /etc/systemd/system/openvpn-server@.service.d
 cat >/etc/systemd/system/openvpn-server@.service.d/override.conf <<'EOF'
 [Service]
-# Create /run/openvpn-server at start (owned by root, mode below)
-RuntimeDirectory=openvpn-server
-RuntimeDirectoryMode=0755
-
-# Create temp subdir for PAM plugin with correct owner/mode, atomically
-ExecStartPre=/usr/bin/install -d -m 0770 -o openvpn -g openvpn /run/openvpn-server/tmp
-
-# Allow writes to these paths inside the service sandbox
-ReadWritePaths=/run/openvpn-server /var/log/openvpn /etc/openvpn
+# Allow OpenVPN (including PAM plugin) to write to these paths
+# (Default unit already writes under /run/openvpn-server for status)
+ReadWritePaths=/tmp /var/log/openvpn /etc/openvpn /run/openvpn-server
 EOF
 
 systemctl daemon-reload
 
-# ---------- UFW + NAT ----------
+# ----- UFW + NAT -----
 log "Configuring UFW and NAT..."
 ufw --force enable || true
 ufw allow OpenSSH || ufw allow ssh || true
@@ -235,9 +231,9 @@ IFACE="$(default_iface)"; [[ -n "$IFACE" ]] || IFACE="eth0"
 ensure_nat_block "$IFACE"
 ufw --force reload || { err "UFW reload failed"; exit 1; }
 
-# ---------- Enable & start service ----------
+# ----- Start service -----
 log "Starting openvpn-server@${SERVER_NAME} ..."
-systemctl enable --now "openvpn-server@${SERVER_NAME}"
+systemctl enable --now "openvpn-server@${SERVER_NAME}" || true
 sleep 2
 if ! systemctl is-active --quiet "openvpn-server@${SERVER_NAME}"; then
   systemctl status "openvpn-server@${SERVER_NAME}" --no-pager || true
@@ -246,7 +242,7 @@ if ! systemctl is-active --quiet "openvpn-server@${SERVER_NAME}"; then
   exit 1
 fi
 
-# ---------- Management helper ----------
+# ----- Management helper -----
 log "Installing /usr/local/bin/openvpn-manage ..."
 cat >/usr/local/bin/openvpn-manage <<'MAN'
 #!/bin/bash
@@ -273,7 +269,7 @@ usage(){
   echo "  status             - Service status + connected clients count"
   echo "  restart            - Restart service"
   echo "  logs               - Tail server log"
-  echo "  fixperms           - Fix log/runtime perms and restart"
+  echo "  fixperms           - Fix log perms and restart"
 }
 
 server_ip(){ curl -fsS ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -356,11 +352,9 @@ status_srv(){
 logs(){ exec tail -n 100 -F /var/log/openvpn/openvpn.log; }
 
 fixperms(){
-  mkdir -p /var/log/openvpn /run/openvpn-server/tmp
+  mkdir -p /var/log/openvpn
   chown -R openvpn:openvpn /var/log/openvpn
   chmod 0755 /var/log/openvpn
-  # Runtime dir is created by systemd, but ensure tmp exists & owned by openvpn
-  install -d -m 0770 -o openvpn -g openvpn /run/openvpn-server/tmp
   systemctl restart "$UNIT"
   log "Permissions fixed and service restarted."
 }
@@ -379,7 +373,7 @@ esac
 MAN
 chmod +x /usr/local/bin/openvpn-manage
 
-# ---------- Quick status helper ----------
+# ----- Quick status helper -----
 cat >/usr/local/bin/openvpn-status <<'STAT'
 #!/bin/bash
 set -euo pipefail
@@ -398,7 +392,7 @@ echo "Recent log:"
 STAT
 chmod +x /usr/local/bin/openvpn-status
 
-# ---------- Done ----------
+# ----- Done -----
 PUB_IP="$(server_ip || true)"
 echo
 log "Installation complete."

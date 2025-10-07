@@ -439,7 +439,6 @@ keepalive 10 120
 # Security enhancements
 explicit-exit-notify 1
 tls-server
-tls-version-min 1.2
 EOF
 
     # Create directories

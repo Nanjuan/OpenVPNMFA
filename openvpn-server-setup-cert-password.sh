@@ -4,13 +4,14 @@
 # Ubuntu 20.04/22.04/24.04/24.10 + OpenVPN 2.6.x
 # - PAM (pam_unix) auth only (verify-client-cert none)
 # - Correct systemd unit: openvpn-server@server
-# - Uses AppArmor-allowed tmp dir: /run/openvpn-server/tmp
+# - NO tmp-dir directive (uses default /tmp for PAM deferred-auth files)
 # - Idempotent UFW/NAT config + reload
 # - Client profiles include setenv CLIENT_CERT 0
+# - Server verbosity: verb 6
 #
 set -euo pipefail
 
-SCRIPT_VERSION="3.3-userpass"
+SCRIPT_VERSION="3.5-userpass"
 SCRIPT_DATE="2025-10-07"
 
 # ---------- UI ----------
@@ -26,8 +27,6 @@ SERVER_DIR="/etc/openvpn/server"
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
 CLIENT_DIR="/etc/openvpn/clients"
 LOG_DIR="/var/log/openvpn"
-RUN_PARENT="/run/openvpn-server"      # AppArmor-friendly parent
-RUN_DIR="/run/openvpn-server/tmp"     # tmp-dir used by OpenVPN
 
 SERVER_NAME="server"
 VPN_NETWORK="10.8.0.0"
@@ -129,22 +128,13 @@ popd >/dev/null
 
 # ---------- Directories & permissions ----------
 log "Creating directories and setting permissions..."
-mkdir -p "$SERVER_DIR" "$CLIENT_DIR" "$LOG_DIR" "$RUN_DIR"
+mkdir -p "$SERVER_DIR" "$CLIENT_DIR" "$LOG_DIR"
 touch "$LOG_DIR/openvpn.log" "$LOG_DIR/openvpn-status.log" "$OPENVPN_DIR/ipp.txt"
-# parent + tmp dir owned by openvpn to let the daemon write status & temp files
-chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$RUN_PARENT"
-chmod 0775 "$RUN_PARENT"
+
+# Allow openvpn process to write logs after privilege drop
 chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
-chmod 0770 "$RUN_DIR"
 chown "$OPENVPN_USER:$OPENVPN_GROUP" "$OPENVPN_DIR/ipp.txt"
-
-# Persist runtime dirs across reboots
-cat >/etc/tmpfiles.d/openvpn-run.conf <<EOF
-d $RUN_PARENT 0775 $OPENVPN_USER $OPENVPN_GROUP -
-d $RUN_DIR    0770 $OPENVPN_USER $OPENVPN_GROUP -
-EOF
-systemd-tmpfiles --create /etc/tmpfiles.d/openvpn-run.conf
 
 # ---------- PAM (password auth only) ----------
 log "Writing /etc/pam.d/openvpn ..."
@@ -191,18 +181,15 @@ data-ciphers $DATA_CIPHERS
 data-ciphers-fallback AES-256-GCM
 auth $AUTH_DIGEST
 
-# Priv drop & runtime
+# Privilege drop (OpenVPN uses /tmp for temp files by default)
 user $OPENVPN_USER
 group $OPENVPN_GROUP
 persist-tun
 persist-key
-tmp-dir $RUN_DIR
 
 # Logging
 log-append $LOG_DIR/openvpn.log
-status $RUN_PARENT/status-server.log
-status-version 2
-verb 3
+verb 6
 mute 20
 
 # Keepalive & UDP niceties
@@ -256,9 +243,6 @@ EASYRSA_DIR="/etc/openvpn/easy-rsa"
 CLIENT_DIR="/etc/openvpn/clients"
 SERVER_NAME="server"
 UNIT="openvpn-server@${SERVER_NAME}"
-OPENVPN_SYSTEM_USER="openvpn"
-OPENVPN_SYSTEM_GROUP="openvpn"
-RUN_DIR="/run/openvpn-server/tmp"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 log(){ echo -e "${GREEN}[$(date +'%H:%M:%S')] $*${NC}"; }
@@ -274,7 +258,6 @@ usage(){
   echo "  status             - Service status + connected clients count"
   echo "  restart            - Restart service"
   echo "  logs               - Tail server log"
-  echo "  fixperms           - Fix /run and /var/log perms"
 }
 
 server_ip(){ curl -fsS ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -347,19 +330,14 @@ status_srv(){
   systemctl status "$UNIT" --no-pager || true
   echo
   echo -n "Connected clients: "
-  [[ -f /var/log/openvpn/openvpn-status.log ]] && grep -c "^CLIENT_LIST" /var/log/openvpn/openvpn-status.log || echo 0
+  if [[ -f /run/openvpn-server/status-server.log ]]; then
+    grep -c "^CLIENT_LIST" /run/openvpn-server/status-server.log || echo 0
+  else
+    echo 0
+  fi
 }
 
-fixperms(){
-  mkdir -p /var/log/openvpn "$RUN_DIR"
-  chown -R "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn /run/openvpn-server
-  chmod 755 /var/log/openvpn
-  chmod 770 "$RUN_DIR"
-  touch /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
-  chown "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
-  systemctl restart "$UNIT"
-  log "Permissions fixed and service restarted."
-}
+logs(){ exec tail -n 100 -F /var/log/openvpn/openvpn.log; }
 
 case "${1:-}" in
   add) shift; add_user "${1:-}";;
@@ -368,8 +346,7 @@ case "${1:-}" in
   list) list_profiles;;
   status) status_srv;;
   restart) systemctl restart "$UNIT"; log "Restarted.";;
-  logs) exec tail -n 100 -F /var/log/openvpn/openvpn.log;;
-  fixperms) fixperms;;
+  logs) logs;;
   *) usage; exit 1;;
 esac
 MAN
@@ -382,9 +359,9 @@ set -euo pipefail
 echo "=== OpenVPN Server Status ==="
 systemctl status openvpn-server@server --no-pager || true
 echo
-if [[ -f /var/log/openvpn/openvpn-status.log ]]; then
+if [[ -f /run/openvpn-server/status-server.log ]]; then
   echo -n "Connected clients: "
-  grep -c "^CLIENT_LIST" /var/log/openvpn/openvpn-status.log || echo 0
+  grep -c "^CLIENT_LIST" /run/openvpn-server/status-server.log || echo 0
 else
   echo "Connected clients: 0"
 fi

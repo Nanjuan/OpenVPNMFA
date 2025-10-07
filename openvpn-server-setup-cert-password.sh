@@ -4,17 +4,17 @@
 # Ubuntu 20.04/22.04/24.04/24.10 + OpenVPN 2.6.x
 # - PAM (pam_unix) auth only (verify-client-cert none)
 # - Correct systemd unit: openvpn-server@server
-# - Uses AppArmor-allowed tmp dir: /run/openvpn  (Fix A)
-# - Idempotent UFW/NAT configuration and reload
-# - Generates client profiles with setenv CLIENT_CERT 0 to avoid external-cert prompt
+# - Uses AppArmor-allowed tmp dir: /run/openvpn-server/tmp
+# - Idempotent UFW/NAT config + reload
+# - Client profiles include setenv CLIENT_CERT 0
 #
 set -euo pipefail
 
-SCRIPT_VERSION="3.2-userpass"
+SCRIPT_VERSION="3.3-userpass"
 SCRIPT_DATE="2025-10-07"
 
 # ---------- UI ----------
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log(){ echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $*${NC}"; }
 warn(){ echo -e "${YELLOW}[WARN] $*${NC}"; }
 err(){ echo -e "${RED}[ERROR] $*${NC}" >&2; }
@@ -26,7 +26,8 @@ SERVER_DIR="/etc/openvpn/server"
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
 CLIENT_DIR="/etc/openvpn/clients"
 LOG_DIR="/var/log/openvpn"
-RUN_DIR="/run/openvpn"               # <-- AppArmor-allowed tmp path (Fix A)
+RUN_PARENT="/run/openvpn-server"      # AppArmor-friendly parent
+RUN_DIR="/run/openvpn-server/tmp"     # tmp-dir used by OpenVPN
 
 SERVER_NAME="server"
 VPN_NETWORK="10.8.0.0"
@@ -35,7 +36,7 @@ VPN_PORT="1194"
 VPN_PROTO="udp"
 
 DATA_CIPHERS="AES-256-GCM:AES-128-GCM"
-AUTH_DIGEST="SHA512"                 # control-channel HMAC; data-channel uses AEAD
+AUTH_DIGEST="SHA512"
 TLS_VERSION_MIN="1.2"
 
 OPENVPN_USER="openvpn"
@@ -47,19 +48,19 @@ log "OpenVPN User/Pass Setup v${SCRIPT_VERSION} (${SCRIPT_DATE})"
 
 # ---------- Helpers ----------
 detect_pam_plugin() {
-  local paths=(
-    "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
-    "/usr/lib/openvpn/plugins/openvpn-plugin-auth-pam.so"
-    "/usr/lib64/openvpn/plugins/openvpn-plugin-auth-pam.so"
-    "/usr/lib/openvpn/plugins/auth-pam.so"
-  )
-  for p in "${paths[@]}"; do [[ -f "$p" ]] && { echo "$p"; return; } done
+  local p
+  for p in \
+    /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so \
+    /usr/lib/openvpn/plugins/openvpn-plugin-auth-pam.so \
+    /usr/lib64/openvpn/plugins/openvpn-plugin-auth-pam.so \
+    /usr/lib/openvpn/plugins/auth-pam.so; do
+    [[ -f "$p" ]] && { echo "$p"; return; }
+  done
   echo "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
 }
 
-default_iface() { ip -4 route list default | awk '{print $5; exit}'; }
+default_iface(){ ip -4 route list default | awk '{print $5; exit}'; }
 
-# Insert a single NAT block before the first *filter section. Idempotent.
 ensure_nat_block() {
   local br="/etc/ufw/before.rules"
   local bkp="/etc/ufw/before.rules.bak.$(date +%s)"
@@ -117,14 +118,11 @@ rm -rf "$EASYRSA_DIR"
 mkdir -p "$EASYRSA_DIR"
 cp -r /usr/share/easy-rsa/* "$EASYRSA_DIR"/
 pushd "$EASYRSA_DIR" >/dev/null
-
 ./easyrsa init-pki
 EASYRSA_BATCH=1 ./easyrsa build-ca nopass
 EASYRSA_BATCH=1 ./easyrsa build-server-full "$SERVER_NAME" nopass
 EASYRSA_BATCH=1 ./easyrsa gen-dh
-# New syntax (avoids deprecation warning)
 openvpn --genkey secret pki/ta.key
-
 chmod 600 "pki/private/${SERVER_NAME}.key" "pki/ta.key" || true
 chmod 644 "pki/ca.crt" "pki/issued/${SERVER_NAME}.crt" || true
 popd >/dev/null
@@ -133,14 +131,18 @@ popd >/dev/null
 log "Creating directories and setting permissions..."
 mkdir -p "$SERVER_DIR" "$CLIENT_DIR" "$LOG_DIR" "$RUN_DIR"
 touch "$LOG_DIR/openvpn.log" "$LOG_DIR/openvpn-status.log" "$OPENVPN_DIR/ipp.txt"
-chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$LOG_DIR" "$RUN_DIR"
+# parent + tmp dir owned by openvpn to let the daemon write status & temp files
+chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$RUN_PARENT"
+chmod 0775 "$RUN_PARENT"
+chown -R "$OPENVPN_USER:$OPENVPN_GROUP" "$LOG_DIR"
+chmod 0755 "$LOG_DIR"
+chmod 0770 "$RUN_DIR"
 chown "$OPENVPN_USER:$OPENVPN_GROUP" "$OPENVPN_DIR/ipp.txt"
-chmod 755 "$LOG_DIR"
-chmod 770 "$RUN_DIR"
 
-# Persist /run/openvpn across boots
+# Persist runtime dirs across reboots
 cat >/etc/tmpfiles.d/openvpn-run.conf <<EOF
-d $RUN_DIR 0770 $OPENVPN_USER $OPENVPN_GROUP -
+d $RUN_PARENT 0775 $OPENVPN_USER $OPENVPN_GROUP -
+d $RUN_DIR    0770 $OPENVPN_USER $OPENVPN_GROUP -
 EOF
 systemd-tmpfiles --create /etc/tmpfiles.d/openvpn-run.conf
 
@@ -198,7 +200,7 @@ tmp-dir $RUN_DIR
 
 # Logging
 log-append $LOG_DIR/openvpn.log
-status $LOG_DIR/openvpn-status.log
+status $RUN_PARENT/status-server.log
 status-version 2
 verb 3
 mute 20
@@ -256,6 +258,7 @@ SERVER_NAME="server"
 UNIT="openvpn-server@${SERVER_NAME}"
 OPENVPN_SYSTEM_USER="openvpn"
 OPENVPN_SYSTEM_GROUP="openvpn"
+RUN_DIR="/run/openvpn-server/tmp"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 log(){ echo -e "${GREEN}[$(date +'%H:%M:%S')] $*${NC}"; }
@@ -348,10 +351,10 @@ status_srv(){
 }
 
 fixperms(){
-  mkdir -p /var/log/openvpn /run/openvpn
-  chown -R "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn /run/openvpn
+  mkdir -p /var/log/openvpn "$RUN_DIR"
+  chown -R "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn /run/openvpn-server
   chmod 755 /var/log/openvpn
-  chmod 770 /run/openvpn
+  chmod 770 "$RUN_DIR"
   touch /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
   chown "$OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP" /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
   systemctl restart "$UNIT"

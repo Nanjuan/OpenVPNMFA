@@ -462,11 +462,27 @@ EOF
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR
     chmod 755 $LOG_DIR
     
-    # Set permissions for temporary directory
+    # Set permissions for temporary directory (must be writable by OpenVPN process)
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
-    chmod 755 /var/run/openvpn-tmp
+    chmod 770 /var/run/openvpn-tmp
     
     success "OpenVPN server configuration completed"
+}
+
+# Fix temporary directory permissions (for existing installations)
+fix_temp_dir_permissions() {
+    if [[ -d "/var/run/openvpn-tmp" ]]; then
+        log "Fixing temporary directory permissions..."
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
+        chmod 770 /var/run/openvpn-tmp
+        success "Temporary directory permissions fixed"
+    else
+        log "Creating temporary directory with correct permissions..."
+        mkdir -p /var/run/openvpn-tmp
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
+        chmod 770 /var/run/openvpn-tmp
+        success "Temporary directory created"
+    fi
 }
 
 # Configure firewall
@@ -587,6 +603,7 @@ show_usage() {
     echo "  restart            - Restart OpenVPN service"
     echo "  logs               - Show recent logs"
     echo "  test               - Test server configuration"
+    echo "  fix                - Fix permissions and restart service"
     echo ""
 }
 
@@ -781,6 +798,30 @@ test_config() {
     fi
 }
 
+fix_permissions() {
+    log "Fixing OpenVPN permissions..."
+    
+    # Fix temporary directory permissions
+    if [[ -d "/var/run/openvpn-tmp" ]]; then
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
+        chmod 770 /var/run/openvpn-tmp
+        success "Temporary directory permissions fixed"
+    else
+        mkdir -p /var/run/openvpn-tmp
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
+        chmod 770 /var/run/openvpn-tmp
+        success "Temporary directory created"
+    fi
+    
+    # Fix log directory permissions
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR
+    chmod 755 $LOG_DIR
+    
+    # Restart service
+    systemctl restart openvpn@$SERVER_NAME
+    success "OpenVPN service restarted"
+}
+
 # Main script logic
 case "${1:-}" in
     add)
@@ -810,6 +851,9 @@ case "${1:-}" in
         ;;
     test)
         test_config
+        ;;
+    fix)
+        fix_permissions
         ;;
     *)
         show_usage

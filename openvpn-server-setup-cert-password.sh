@@ -259,7 +259,44 @@ echo "$PASSWORD" | /usr/bin/pamtester openvpn "$USERNAME" authenticate
 AUTH_EOF
     
     chmod +x $OPENVPN_DIR/auth-script.sh
+    
+    # Verify PAM configuration
+    if [[ -f "/etc/pam.d/openvpn" ]]; then
+        success "PAM configuration file created"
+    else
+        error "PAM configuration file not found"
+        return 1
+    fi
+    
+    # Verify auth script
+    if [[ -f "$OPENVPN_DIR/auth-script.sh" ]]; then
+        success "PAM authentication script created"
+    else
+        error "PAM authentication script not found"
+        return 1
+    fi
+    
     success "PAM authentication configured"
+}
+
+# Detect PAM plugin path
+detect_pam_plugin() {
+    local plugin_paths=(
+        "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
+        "/usr/lib/openvpn/plugins/openvpn-plugin-auth-pam.so"
+        "/usr/lib64/openvpn/plugins/openvpn-plugin-auth-pam.so"
+        "/usr/lib/openvpn/plugins/auth-pam.so"
+    )
+    
+    for path in "${plugin_paths[@]}"; do
+        if [[ -f "$path" ]]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    
+    # If not found, return the most common path
+    echo "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
 }
 
 # Setup EasyRSA Certificate Authority
@@ -316,6 +353,10 @@ setup_easyrsa() {
 configure_openvpn() {
     log "Configuring OpenVPN server..."
     
+    # Detect PAM plugin path
+    local pam_plugin=$(detect_pam_plugin)
+    log "Using PAM plugin: $pam_plugin"
+    
     # Create server configuration file (Certificate + Username/Password authentication)
     cat > $OPENVPN_DIR/$SERVER_NAME.conf << EOF
 # OpenVPN Server Configuration
@@ -351,14 +392,8 @@ data-ciphers-fallback AES-256-GCM
 auth $AUTH
 tls-version-min $TLS_VERSION
 
-# Perfect Forward Secrecy
-tls-crypt $EASYRSA_DIR/pki/ta.key
-
-# Additional security
-remote-cert-tls client
-
-# PAM Authentication
-plugin /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so openvpn
+# PAM Authentication (Certificate + Username/Password)
+plugin $pam_plugin openvpn
 verify-client-cert none
 username-as-common-name
 
@@ -388,27 +423,26 @@ explicit-exit-notify 1
 tls-server
 EOF
 
-    # Create directories
+    # Create directories with proper ownership
     mkdir -p $LOG_DIR
     mkdir -p $CLIENT_DIR
     mkdir -p $BACKUP_DIR
     mkdir -p /var/run/openvpn-tmp
     
     # Set secure ownership and permissions
-    # Use root:root for backup; OpenVPN user owns logs to write
+    # Use root:root for backup and client configs
     chown root:root $BACKUP_DIR
     chmod 755 $BACKUP_DIR
     chown root:root $CLIENT_DIR
     chmod 700 $CLIENT_DIR
     
-    # Prepare log directory and files with correct ownership for runtime user
-    mkdir -p $LOG_DIR
+    # Log directory and files with correct ownership for runtime user
     touch $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR/openvpn.log $LOG_DIR/openvpn-status.log
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP $LOG_DIR
     chmod 755 $LOG_DIR
     
-    # Set permissions for temporary directory (must be writable by OpenVPN process)
+    # Temporary directory (must be writable by OpenVPN process)
     chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
     chmod 770 /var/run/openvpn-tmp
     
@@ -724,19 +758,23 @@ fix_permissions() {
     
     # Fix temporary directory permissions
     if [[ -d "/var/run/openvpn-tmp" ]]; then
-        chown openvpn:openvpn /var/run/openvpn-tmp
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
         chmod 770 /var/run/openvpn-tmp
         success "Temporary directory permissions fixed"
     else
         mkdir -p /var/run/openvpn-tmp
-        chown openvpn:openvpn /var/run/openvpn-tmp
+        chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/run/openvpn-tmp
         chmod 770 /var/run/openvpn-tmp
         success "Temporary directory created"
     fi
     
     # Fix log directory permissions
-    chown openvpn:openvpn /var/log/openvpn
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/log/openvpn
     chmod 755 /var/log/openvpn
+    
+    # Fix log files
+    touch /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
+    chown $OPENVPN_SYSTEM_USER:$OPENVPN_SYSTEM_GROUP /var/log/openvpn/openvpn.log /var/log/openvpn/openvpn-status.log
     
     # Restart service
     systemctl restart openvpn@$SERVER_NAME

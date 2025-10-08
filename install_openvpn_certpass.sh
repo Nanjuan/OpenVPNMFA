@@ -130,7 +130,26 @@ install_packages() {
     case "$OS_TYPE" in
         ubuntu|debian)
             apt update
-            apt install -y openvpn easy-rsa openssl iptables-persistent ufw curl
+            # Check Ubuntu version to handle package conflicts
+            UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "unknown")
+            if [[ "$OS_TYPE" == "ubuntu" && "$UBUNTU_VERSION" == "24.04" ]]; then
+                # Ubuntu 24.04 has conflicts between ufw and iptables-persistent
+                # Install packages separately to avoid conflicts
+                apt install -y openvpn easy-rsa openssl curl
+                # Try to install ufw first, then iptables-persistent if ufw fails
+                if ! apt install -y ufw; then
+                    log_warning "UFW installation failed, trying iptables-persistent instead"
+                    apt install -y iptables-persistent
+                fi
+            else
+                # For other versions, try the standard installation
+                apt install -y openvpn easy-rsa openssl curl
+                # Try ufw first, fallback to iptables-persistent
+                if ! apt install -y ufw; then
+                    log_warning "UFW not available, installing iptables-persistent"
+                    apt install -y iptables-persistent
+                fi
+            fi
             ;;
         rhel)
             # Install EPEL if not present
@@ -295,8 +314,8 @@ configure_firewall() {
     
     case "$OS_TYPE" in
         ubuntu|debian)
-            # Check if UFW is available
-            if command -v ufw &> /dev/null; then
+            # Check if UFW is available and working
+            if command -v ufw &> /dev/null && ufw status &> /dev/null; then
                 FIREWALL_TYPE="ufw"
                 ufw --force enable
                 ufw allow $PORT/$PROTO
@@ -321,6 +340,7 @@ EOF
                 
                 # Save iptables rules
                 if command -v iptables-save &> /dev/null; then
+                    mkdir -p /etc/iptables
                     iptables-save > /etc/iptables/rules.v4
                 fi
             fi

@@ -194,9 +194,15 @@ init_pki() {
     
     cd /etc/openvpn/easy-rsa
     
+    # Copy Easy-RSA files if not already present
+    if [[ ! -f easyrsa ]]; then
+        cp -r /usr/share/easy-rsa/* .
+        chmod +x easyrsa
+    fi
+    
     # Initialize PKI if not already done
     if [[ ! -d pki ]]; then
-        easyrsa init-pki
+        ./easyrsa init-pki
     fi
     
     # Create vars file
@@ -215,17 +221,17 @@ EOF
     
     # Build CA
     if [[ ! -f pki/ca.crt ]]; then
-        easyrsa build-ca nopass
+        ./easyrsa build-ca nopass
     fi
     
     # Build server certificate
     if [[ ! -f pki/issued/server.crt ]]; then
-        easyrsa build-server-full server nopass
+        ./easyrsa build-server-full server nopass
     fi
     
     # Generate DH parameters
     if [[ ! -f pki/dh.pem ]]; then
-        easyrsa gen-dh
+        ./easyrsa gen-dh
     fi
     
     # Generate TLS-Crypt key
@@ -445,7 +451,7 @@ add_client() {
     cd /etc/openvpn/easy-rsa
     
     # Create client certificate
-    easyrsa build-client-full "$username" nopass
+    ./easyrsa build-client-full "$username" nopass
     
     # Create client directory
     mkdir -p "/etc/openvpn/clients/$username"
@@ -518,10 +524,10 @@ revoke_client() {
     cd /etc/openvpn/easy-rsa
     
     # Revoke certificate
-    easyrsa revoke "$username"
+    ./easyrsa revoke "$username"
     
     # Generate new CRL
-    easyrsa gen-crl
+    ./easyrsa gen-crl
     
     # Copy CRL to OpenVPN directory
     cp pki/crl.pem /etc/openvpn/

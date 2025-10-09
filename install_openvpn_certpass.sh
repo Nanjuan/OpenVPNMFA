@@ -331,7 +331,7 @@ if is_service_running; then
     read -r -p "Select: " choice
     case "$choice" in
       1)
-        read -r -p "Client name (CN): " CN
+        read -r -p "Client name (CN) username: " CN
         [ -z "$CN" ] && { echo "No CN provided."; continue; }
         make_client "$CN"
         RIP="$(detect_public_ip)"
@@ -340,7 +340,7 @@ if is_service_running; then
         inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
         ;;
       2)
-        read -r -p "Client name (CN) to revoke: " CN
+        read -r -p "Client name (CN) username to revoke: " CN
         [ -z "$CN" ] && { echo "No CN provided."; continue; }
         revoke_client "$CN"
         ;;
@@ -415,7 +415,7 @@ while true; do
   read -r -p "Select: " choice
   case "$choice" in
     1)
-      read -r -p "Client name (CN): " CN
+      read -r -p "Client name (CN) username: " CN
       [ -z "$CN" ] && { echo "No CN provided."; continue; }
       make_client "$CN"
       RIP="$(detect_public_ip)"
@@ -424,7 +424,7 @@ while true; do
       inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
       ;;
     2)
-      read -r -p "Client name (CN) to revoke: " CN
+      read -r -p "Client name (CN) username to revoke: " CN
       [ -z "$CN" ] && { echo "No CN provided."; continue; }
       revoke_client "$CN"
       ;;

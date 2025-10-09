@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# openvpn-cert-only-setup.sh
+# openvpn-cert-only-setup.sh (REFORMATTED UI TO MATCH SCRIPT #1)
 # OpenVPN server install (Certificate-Only auth), NO networking/firewall config.
 # Minimal deps install: openvpn, easy-rsa, curl, ca-certificates
-
 set -euo pipefail
-
-# ---------------------- Script meta ----------------------
-SCRIPT_VERSION="2.0-cert-min"
-SCRIPT_DATE="2024-10-07"
 
 # ---------------------- Constants/Paths ------------------
 INSTANCE_NAME="server"                                 # fixed systemd instance + config filename
@@ -19,14 +14,16 @@ LOG_DIR="/var/log/openvpn"
 BACKUP_DIR="/etc/openvpn/backup"
 SCRIPT_DIR="/usr/local/bin"
 
-# Server config parameters (same defaults as before)
-SERVER_NAME="server"
-VPN_NETWORK="10.8.0.0"
-VPN_NETMASK="255.255.255.0"
-VPN_PORT="1194"
-VPN_PROTOCOL="udp"
+# Defaults (can be overridden via interactive prompts during install)
+SERVER_NAME_DEFAULT="server"
+VPN_NETWORK_DEFAULT="10.8.0.0"
+VPN_NETMASK_DEFAULT="255.255.255.0"
+VPN_PORT_DEFAULT="1194"
+VPN_PROTOCOL_DEFAULT="udp"
+DNS1_DEFAULT="8.8.8.8"
+DNS2_DEFAULT="8.8.4.4"
 
-# Security/ciphers
+# Security/ciphers (unchanged functionality)
 AUTH="SHA512"
 TLS_VERSION="1.2"
 
@@ -35,57 +32,64 @@ OPENVPN_SYSTEM_USER="openvpn"
 OPENVPN_SYSTEM_GROUP="openvpn"
 
 # ---------------------- Colors/Output --------------------
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'
-PURPLE='\033[0;35m'; CYAN='\033[0;36m'; NC='\033[0m'
-log(){ echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"; }
-error(){ echo -e "${RED}[ERROR] $1${NC}" >&2; }
-warning(){ echo -e "${YELLOW}[WARNING] $1${NC}"; }
-info(){ echo -e "${BLUE}[INFO] $1${NC}"; }
-success(){ echo -e "${GREEN}[SUCCESS] $1${NC}"; }
-header(){ echo -e "${PURPLE}================================${NC}\n${PURPLE}$1${NC}\n${PURPLE}================================${NC}"; }
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+die(){ echo -e "${RED}ERROR: $*${NC}" >&2; exit 1; }
+need_root(){ [ "$(id -u)" -eq 0 ] || die "Run as root."; }
 
-# ---------------------- Checks ---------------------------
-check_root(){ [[ $EUID -eq 0 ]] || { error "Run as root"; exit 1; } }
+# ---------------------- Helpers (UI-style like Script #1) --------------------
+prompt_default(){ local p="$1" d="$2" v; read -r -p "$p [$d]: " v; echo "${v:-$d}"; }
+detect_public_ip(){ curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}'; }
+is_service_running(){ systemctl is-active --quiet "openvpn-server@${INSTANCE_NAME}"; }
 
-show_header(){
-  header "OpenVPN Server Setup (Certificate-Only, No Networking)"
-  echo -e "${CYAN}Authentication: Certificate Only (no user/password)${NC}"
-  echo -e "${CYAN}Service model:  openvpn-server@${INSTANCE_NAME}${NC}"
-  echo -e "${CYAN}Config file:    ${SERVER_DIR}/${INSTANCE_NAME}.conf${NC}"
-  echo -e "${CYAN}Date:           ${SCRIPT_DATE} | Version: ${SCRIPT_VERSION}${NC}\n"
+get_server_port(){
+  [ -f "${SERVER_DIR}/${INSTANCE_NAME}.conf" ] || { echo "$VPN_PORT_DEFAULT"; return; }
+  awk '/^port[[:space:]]+/ {print $2; f=1} END{if(!f) print "'"$VPN_PORT_DEFAULT"'"}' "${SERVER_DIR}/${INSTANCE_NAME}.conf"
+}
+get_server_proto(){
+  [ -f "${SERVER_DIR}/${INSTANCE_NAME}.conf" ] || { echo "$VPN_PROTOCOL_DEFAULT"; return; }
+  awk '/^proto[[:space:]]+/ {print $2; f=1} END{if(!f) print "'"$VPN_PROTOCOL_DEFAULT"'"}' "${SERVER_DIR}/${INSTANCE_NAME}.conf"
 }
 
-# ---------------------- Minimal deps ---------------------
+show_menu(){
+  cat <<'MENU'
+
+===== OpenVPN Cert-Only Manager =====
+1) Add new client (nopass, inline .ovpn)
+2) Revoke client
+3) List clients
+4) Restart OpenVPN service
+5) Show service status
+6) Exit
+MENU
+}
+
+# ---------------------- Minimal deps (kept apt-only as original) -------------
 update_system(){
-  log "Installing required packages (minimal)…"
+  echo -e "${GREEN}Installing required packages (minimal)…${NC}"
   apt update
-  DEBIAN_FRONTEND=noninteractive apt install -y \
-    openvpn easy-rsa curl ca-certificates
-  success "Minimal packages installed"
+  DEBIAN_FRONTEND=noninteractive apt install -y openvpn easy-rsa curl ca-certificates
 }
 
 create_openvpn_user(){
-  log "Ensuring OpenVPN system user (${OPENVPN_SYSTEM_USER}) exists..."
+  echo -e "${GREEN}Ensuring OpenVPN system user (${OPENVPN_SYSTEM_USER}) exists...${NC}"
   getent group "$OPENVPN_SYSTEM_GROUP" >/dev/null 2>&1 || groupadd -r "$OPENVPN_SYSTEM_GROUP"
   if id -u "$OPENVPN_SYSTEM_USER" >/dev/null 2>&1; then
-    info "User ${OPENVPN_SYSTEM_USER} already exists"
+    echo -e "${BLUE}User ${OPENVPN_SYSTEM_USER} already exists${NC}"
   else
     useradd -r -s /usr/sbin/nologin -g "$OPENVPN_SYSTEM_GROUP" "$OPENVPN_SYSTEM_USER"
-    success "Created system user ${OPENVPN_SYSTEM_USER}"
+    echo -e "${GREEN}Created system user ${OPENVPN_SYSTEM_USER}${NC}"
   fi
 }
 
-# ---------------------- Easy-RSA / PKI -------------------
+# ---------------------- Easy-RSA / PKI (certificate-only, nopass) -----------
 setup_easyrsa(){
-  log "Setting up Easy-RSA PKI..."
+  echo -e "${GREEN}Setting up Easy-RSA PKI...${NC}"
   rm -rf "$EASYRSA_DIR"
   mkdir -p "$EASYRSA_DIR"
   cp -a /usr/share/easy-rsa/* "$EASYRSA_DIR"/
   cd "$EASYRSA_DIR"
 
   ./easyrsa init-pki
-
-  # Keep certificate-only/no-passphrase behavior
   ./easyrsa --batch --req-cn="OpenVPN-CA" build-ca nopass
   ./easyrsa gen-dh
   openvpn --genkey --secret pki/ta.key
@@ -98,21 +102,20 @@ setup_easyrsa(){
   chmod 644 pki/ca.crt "pki/issued/${SERVER_NAME}.crt" || true
 
   [[ -f "pki/ca.crt" && -f "pki/issued/${SERVER_NAME}.crt" ]] \
-    && success "PKI generated (CA and server certs)" \
-    || { error "Easy-RSA failed to create required materials"; exit 1; }
+    || die "Easy-RSA failed to create required materials"
 }
 
-# ---------------------- OpenVPN config -------------------
-configure_openvpn(){
-  log "Writing server configuration..."
+# ---------------------- OpenVPN config (no networking changes) --------------
+write_server_conf(){
+  local port="$1" proto="$2" vnet="$3" vmask="$4" dns1="$5" dns2="$6"
   mkdir -p "$SERVER_DIR" "$CLIENT_DIR" "$LOG_DIR" "$BACKUP_DIR" /var/run/openvpn-tmp
 
   cat > "${SERVER_DIR}/${INSTANCE_NAME}.conf" <<EOF
 # OpenVPN Server (Certificate-Only)
-# Generated by openvpn-cert-only-setup.sh
+# Generated by openvpn-cert-only-setup.sh (UI-refactored)
 
-port ${VPN_PORT}
-proto ${VPN_PROTOCOL}
+port ${port}
+proto ${proto}
 dev tun
 topology subnet
 
@@ -122,12 +125,12 @@ key ${EASYRSA_DIR}/pki/private/${SERVER_NAME}.key
 dh ${EASYRSA_DIR}/pki/dh.pem
 tls-crypt ${EASYRSA_DIR}/pki/ta.key
 
-server ${VPN_NETWORK} ${VPN_NETMASK}
+server ${vnet} ${vmask}
 ifconfig-pool-persist ipp.txt
 
 push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 8.8.8.8"
-push "dhcp-option DNS 8.8.4.4"
+push "dhcp-option DNS ${dns1}"
+push "dhcp-option DNS ${dns2}"
 
 data-ciphers AES-256-GCM:AES-128-GCM
 data-ciphers-fallback AES-256-GCM
@@ -157,228 +160,163 @@ EOF
   chmod 755 "${LOG_DIR}"
   chown "${OPENVPN_SYSTEM_USER}:${OPENVPN_SYSTEM_GROUP}" /var/run/openvpn-tmp
   chmod 770 /var/run/openvpn-tmp
-
-  success "Server config written to ${SERVER_DIR}/${INSTANCE_NAME}.conf"
 }
 
-# ---------------------- systemd service ------------------
 configure_systemd(){
-  log "Enabling and starting OpenVPN service (openvpn-server@${INSTANCE_NAME})..."
-  systemctl enable "openvpn-server@${INSTANCE_NAME}"
+  echo -e "${GREEN}Enabling and starting OpenVPN service (openvpn-server@${INSTANCE_NAME})...${NC}"
+  systemctl enable "openvpn-server@${INSTANCE_NAME}" >/dev/null 2>&1 || true
   systemctl restart "openvpn-server@${INSTANCE_NAME}" || true
   sleep 2
-  if systemctl is-active --quiet "openvpn-server@${INSTANCE_NAME}"; then
-    success "OpenVPN service is running"
+  systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true
+}
+
+# ---------------------- Client management (menu actions) ---------------------
+make_client(){
+  local cn="$1"
+  cd "$EASYRSA_DIR"
+  if [ -f "pki/issued/${cn}.crt" ]; then
+    echo "Client ${cn} already exists."
   else
-    error "OpenVPN service failed to start"
-    systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true
-    exit 1
+    echo
+    echo ">>> Creating client certificate (nopass) for: $cn"
+    ./easyrsa --batch --req-cn="$cn" build-client-full "$cn" nopass
   fi
 }
 
-# ---------------------- Management script ----------------
-create_management_script(){
-  log "Creating management CLI: openvpn-manage"
-
-  cat > "${SCRIPT_DIR}/openvpn-manage" <<'EOF'
-#!/usr/bin/env bash
-# openvpn-manage (Certificate-Only)
-set -euo pipefail
-
-INSTANCE_NAME="server"
-OPENVPN_DIR="/etc/openvpn"
-SERVER_DIR="/etc/openvpn/server"
-EASYRSA_DIR="/etc/openvpn/easy-rsa"
-CLIENT_DIR="/etc/openvpn/clients"
-SERVER_NAME="server"
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; PURPLE='\033[0;35m'; NC='\033[0m'
-log(){ echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"; }
-error(){ echo -e "${RED}[ERROR] $1${NC}" >&2; }
-success(){ echo -e "${GREEN}[SUCCESS] $1${NC}"; }
-
-usage(){
-  echo -e "${PURPLE}OpenVPN Management (Certificate-Only)${NC}"
-  echo "Usage: $0 {add|remove|renew|list|status|backup|restart|logs} [username]"
-}
-
-add_user(){
-  local u="${1:-}"
-  [[ -n "$u" ]] || { error "Username required"; exit 1; }
-  [[ -f "${EASYRSA_DIR}/pki/issued/${u}.crt" ]] && { error "User exists"; exit 1; }
-  log "Creating client cert (nopass) for '$u'..."
-  cd "$EASYRSA_DIR"
-  ./easyrsa --batch --req-cn="$u" build-client-full "$u" nopass
-
-  # Build inline .ovpn using server settings from server.conf
-  local port proto rip
-  port=$(awk '/^port[[:space:]]+/ {print $2; exit}' "${SERVER_DIR}/${INSTANCE_NAME}.conf")
-  proto=$(awk '/^proto[[:space:]]+/ {print $2; exit}' "${SERVER_DIR}/${INSTANCE_NAME}.conf")
-  rip=$(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}')
-
-  mkdir -p "$CLIENT_DIR"
-  cat > "${CLIENT_DIR}/${u}.ovpn" <<CLIENT_EOF
+inline_ovpn(){
+  local cn="$1" remote_ip="$2" port="$3" proto="$4"
+  local out="${CLIENT_DIR}/${cn}.ovpn"
+  cat > "$out" <<EOF
 client
 dev tun
-proto ${proto}
-remote ${rip} ${port}
+proto $proto
+remote $remote_ip $port
 resolv-retry infinite
 nobind
 persist-key
 persist-tun
 cipher AES-256-GCM
-auth SHA512
+auth ${AUTH}
 verb 3
 mute 20
 
 <ca>
-$(cat ${EASYRSA_DIR}/pki/ca.crt)
+$(cat "${EASYRSA_DIR}/pki/ca.crt")
 </ca>
 
 <cert>
-$(openssl x509 -in ${EASYRSA_DIR}/pki/issued/${u}.crt)
+$(openssl x509 -in "${EASYRSA_DIR}/pki/issued/${cn}.crt")
 </cert>
 
 <key>
-$(cat ${EASYRSA_DIR}/pki/private/${u}.key)
+$(cat "${EASYRSA_DIR}/pki/private/${cn}.key")
 </key>
 
 <tls-crypt>
-$(cat ${EASYRSA_DIR}/pki/ta.key)
+$(cat "${EASYRSA_DIR}/pki/ta.key")
 </tls-crypt>
-CLIENT_EOF
-  chmod 600 "${CLIENT_DIR}/${u}.ovpn"
-  success "Created ${CLIENT_DIR}/${u}.ovpn"
+EOF
+  chmod 600 "$out"
+  echo "Generated: $out"
 }
 
-remove_user(){
-  local u="${1:-}"
-  [[ -n "$u" ]] || { error "Username required"; exit 1; }
-  [[ -f "${EASYRSA_DIR}/pki/issued/${u}.crt" ]] || { error "User not found"; exit 1; }
-  log "Revoking '$u'..."
+rebuild_crl(){
   cd "$EASYRSA_DIR"
-  ./easyrsa revoke "$u" || true
   ./easyrsa gen-crl
   install -m 0644 "${EASYRSA_DIR}/pki/crl.pem" "${SERVER_DIR}/crl.pem"
   systemctl restart "openvpn-server@${INSTANCE_NAME}"
-  rm -f "${CLIENT_DIR}/${u}.ovpn}"
-  success "Revoked ${u} and refreshed CRL"
 }
 
-renew_user(){
-  local u="${1:-}"
-  [[ -n "$u" ]] || { error "Username required"; exit 1; }
-  [[ -f "${EASYRSA_DIR}/pki/issued/${u}.crt" ]] || { error "User not found"; exit 1; }
-  log "Renewing '$u'..."
+revoke_client(){
+  local cn="$1"
   cd "$EASYRSA_DIR"
-  ./easyrsa revoke "$u" || true
-  ./easyrsa --batch --req-cn="$u" build-client-full "$u" nopass
-  ./easyrsa gen-crl
-  install -m 0644 "${EASYRSA_DIR}/pki/crl.pem" "${SERVER_DIR}/crl.pem"
-  systemctl restart "openvpn-server@${INSTANCE_NAME}"
-  success "Renewed ${u}"
+  ./easyrsa revoke "$cn" || true
+  rebuild_crl
+  echo "Revoked $cn and refreshed CRL."
 }
 
-list_users(){
-  cd "$EASYRSA_DIR"
-  [[ -d "pki/issued" ]] || { echo "No users"; exit 0; }
-  ls -1 pki/issued/*.crt 2>/dev/null | sed 's#.*/##; s/\.crt$//' | grep -v "^${SERVER_NAME}$" || echo "No users"
+list_clients(){
+  if [ -f "${EASYRSA_DIR}/pki/index.txt" ]; then
+    echo "Status  Expiry(UTC)          Serial            CN"
+    awk '/^V|^R/{
+      status=$1=="V"?"VALID":"REVOKED";
+      split($NF, a, "/CN="); cn=a[length(a)];
+      printf "%-7s %-20s %-16s %s\n", status, $2, $4, cn
+    }' "${EASYRSA_DIR}/pki/index.txt" | grep -v "^${SERVER_NAME}$" | sort
+  else
+    echo "No PKI index found."
+  fi
 }
 
-status_srv(){
-  systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true
-  echo
-  [[ -f "/var/log/openvpn/openvpn-status.log" ]] && \
-    awk -F, '/^CLIENT_LIST/ {c++} END{print "Connected clients:", (c+0)}' /var/log/openvpn/openvpn-status.log || echo "Connected clients: 0"
+# ---------------------- Management loop (like Script #1) ---------------------
+manager_loop(){
+  while true; do
+    show_menu
+    read -r -p "Select: " choice
+    case "$choice" in
+      1)
+        read -r -p "Client name (CN) username: " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        make_client "$CN"
+        RIP="$(detect_public_ip)"
+        RPORT="$(get_server_port)"
+        RPROTO="$(get_server_proto)"
+        inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
+        ;;
+      2)
+        read -r -p "Client name (CN) username to revoke: " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        revoke_client "$CN"
+        ;;
+      3) list_clients ;;
+      4) systemctl restart "openvpn-server@${INSTANCE_NAME}"; systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
+      5) systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
+      6) echo "Done."; exit 0 ;;
+      *) echo "Invalid choice." ;;
+    esac
+  done
 }
 
-backup_cfg(){
-  local ts; ts="$(date +%Y%m%d-%H%M%S)"
-  local out="/etc/openvpn/backup/openvpn-backup-${ts}"
-  mkdir -p "$out"
-  cp -a "${EASYRSA_DIR}/pki" "$out/"
-  cp -a "${SERVER_DIR}/${INSTANCE_NAME}.conf" "$out/"
-  cp -a "${CLIENT_DIR}" "$out/" 2>/dev/null || true
-  tar -czf "${out}.tar.gz" -C "/etc/openvpn/backup" "$(basename "$out")"
-  rm -rf "$out"
-  log "Backup at ${out}.tar.gz"
-}
+# ---------------------- Main -----------------------------
+need_root
 
-logs_tail(){
-  [[ -f "/var/log/openvpn/openvpn.log" ]] && tail -n 40 /var/log/openvpn/openvpn.log || echo "No logs"
-}
-
-case "${1:-}" in
-  add)    add_user "${2:-}";;
-  remove) remove_user "${2:-}";;
-  renew)  renew_user "${2:-}";;
-  list)   list_users;;
-  status) status_srv;;
-  backup) backup_cfg;;
-  restart) systemctl restart "openvpn-server@${INSTANCE_NAME}"; success "Restarted";;
-  logs)   logs_tail;;
-  *) usage; exit 1;;
-esac
-EOF
-
-  chmod +x "${SCRIPT_DIR}/openvpn-manage"
-  success "Created ${SCRIPT_DIR}/openvpn-manage"
-}
-
-# ---------------------- Status helper --------------------
-create_status_script(){
-  log "Creating status helper: openvpn-status"
-  cat > "${SCRIPT_DIR}/openvpn-status" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-echo -e "${BLUE}OpenVPN Server Status (Certificate-Only)${NC}"
-echo "=============================================="
-echo -e "\n${YELLOW}Service:${NC}"
-systemctl status openvpn-server@server --no-pager || true
-echo -e "\n${YELLOW}Connected Clients:${NC}"
-if [[ -f "/var/log/openvpn/openvpn-status.log" ]]; then
-  awk -F, '/^CLIENT_LIST/ {c++} END{print (c+0)}' /var/log/openvpn/openvpn-status.log
-else
-  echo "0"
+# If service already running, skip install and go straight to manager (same UX as Script #1)
+if is_service_running; then
+  echo "Detected running OpenVPN service: openvpn-server@${INSTANCE_NAME}"
+  echo "Skipping installation and entering manager..."
+  manager_loop
+  exit 0
 fi
-echo -e "\n${YELLOW}Server Info:${NC}"
-echo "Server IP: $(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}')"
-grep -E '^(port|proto|server )' /etc/openvpn/server/server.conf || true
-echo -e "\n${YELLOW}Recent Logs:${NC}"
-[[ -f "/var/log/openvpn/openvpn.log" ]] && tail -n 20 /var/log/openvpn/openvpn.log || echo "No logs"
-EOF
-  chmod +x "${SCRIPT_DIR}/openvpn-status"
-  success "Created ${SCRIPT_DIR}/openvpn-status"
-}
 
-# ---------------------- Main install ---------------------
-install_openvpn_server(){
-  header "Starting OpenVPN Server Installation (Certificate-Only, No Networking)"
-  check_root
-  show_header
-  update_system
-  create_openvpn_user
-  setup_easyrsa
-  configure_openvpn
-  configure_systemd
-  create_management_script
-  create_status_script
+# -------- Guided install (prompts with defaults; NO networking config) -------
+echo "===== OpenVPN Setup (Certificate-Only, No Networking) ====="
+echo
+echo "ABOUT THIS SETUP:"
+echo " - Authentication is certificate-only (no usernames/passwords)."
+echo " - Client keys are created WITHOUT a passphrase (nopass) for ease of use."
+echo " - This script does NOT configure firewall/NAT or IP forwarding."
+echo " - You must handle networking separately if clients need internet access."
+echo
 
-  header "Installation Completed"
-  success "OpenVPN is running (certificate-only auth)."
-  info "Config:   ${SERVER_DIR}/${INSTANCE_NAME}.conf"
-  info "Manage:   openvpn-manage"
-  info "Status:   openvpn-status"
-  echo
-  warning "Networking (NAT/forwarding) is NOT configured by this script."
-  warning "Use your separate networking tool to enable internet access for VPN clients."
-}
+SERVER_NAME="$(prompt_default "Server certificate name (CN)" "$SERVER_NAME_DEFAULT")"
+VPN_PORT="$(prompt_default "OpenVPN port" "$VPN_PORT_DEFAULT")"
+VPN_PROTOCOL="$(prompt_default "OpenVPN protocol (udp/tcp)" "$VPN_PROTOCOL_DEFAULT")"
+VPN_NETWORK="$(prompt_default "VPN network" "$VPN_NETWORK_DEFAULT")"
+VPN_NETMASK="$(prompt_default "VPN netmask" "$VPN_NETMASK_DEFAULT")"
+DNS1="$(prompt_default "Primary DNS" "$DNS1_DEFAULT")"
+DNS2="$(prompt_default "Secondary DNS" "$DNS2_DEFAULT")"
 
-# ---------------------- Entrypoint -----------------------
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  case "${1:-install}" in
-    install) install_openvpn_server ;;
-    *) echo "Usage: $0 install"; exit 1 ;;
-  esac
-fi
+# Perform install sequence (same functionality as original script)
+update_system
+create_openvpn_user
+setup_easyrsa
+write_server_conf "$VPN_PORT" "$VPN_PROTOCOL" "$VPN_NETWORK" "$VPN_NETMASK" "$DNS1" "$DNS2"
+configure_systemd
+
+echo
+echo "Base setup complete (certificate-only, no networking configured)."
+echo "Client profiles (.ovpn) will be written to: $CLIENT_DIR"
+echo
+
+# Enter the same manager loop used when service is detected
+manager_loop

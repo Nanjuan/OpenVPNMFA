@@ -43,8 +43,24 @@ ensure_dirs(){
 }
 
 enable_ip_forward(){
-  sed -ri 's|^#?net.ipv4.ip_forward *=.*|net.ipv4.ip_forward=1|' /etc/sysctl.conf
-  sysctl -p >/dev/null || true
+  # Apply immediately
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+  # Persist in a sysctl.d drop-in (portable; doesn’t require /etc/sysctl.conf)
+  mkdir -p /etc/sysctl.d
+  printf 'net.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-openvpn-ipforward.conf
+
+  # If /etc/sysctl.conf exists, make sure it has the setting too (best-effort)
+  if [ -f /etc/sysctl.conf ]; then
+    if grep -q '^\s*net\.ipv4\.ip_forward' /etc/sysctl.conf; then
+      sed -ri 's|^\s*#?\s*net\.ipv4\.ip_forward\s*=.*|net.ipv4.ip_forward=1|' /etc/sysctl.conf || true
+    else
+      printf '\nnet.ipv4.ip_forward=1\n' >> /etc/sysctl.conf || true
+    fi
+  fi
+
+  # Reload all sysctl configs
+  sysctl --system >/dev/null 2>&1 || true
 }
 
 ensure_easyrsa(){

@@ -4,9 +4,12 @@
 # Ubuntu/Debian and RHEL/Rocky/Alma supported. Requires systemd.
 set -euo pipefail
 
+# ---------------------- Constants ----------------------
+INSTANCE_NAME="server"  # fixed systemd instance and config filename (server.conf)
+
 # ---------------------- Helpers ----------------------
 die(){ echo "ERROR: $*" >&2; exit 1; }
-need_root(){ [ "$(id -u)" -eq 0 ] || die "Run as root."; }
+need_root(){ [ "$(id -u )" -eq 0 ] || die "Run as root."; }
 
 detect_pkg(){
   if command -v apt-get >/dev/null 2>&1; then PKG="apt"; return; fi
@@ -26,7 +29,7 @@ pkg_install(){
       ;;
     yum)
       yum install -y epel-release || true
-      yum install -y openvpn easy-rsa curl || yum install -y easy-rsa-3
+      yum install -y openvpn easy-rsa curl || yum install -y easy-rsa-3 curl
       ;;
   esac
 }
@@ -42,15 +45,11 @@ ensure_dirs(){
   chmod 700 "$OUTPUT_DIR"
 }
 
+# Safe IP forward enabling (works even if /etc/sysctl.conf is missing)
 enable_ip_forward(){
-  # Apply immediately
   sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
-
-  # Persist in a sysctl.d drop-in (portable; doesn’t require /etc/sysctl.conf)
   mkdir -p /etc/sysctl.d
   printf 'net.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-openvpn-ipforward.conf
-
-  # If /etc/sysctl.conf exists, make sure it has the setting too (best-effort)
   if [ -f /etc/sysctl.conf ]; then
     if grep -q '^\s*net\.ipv4\.ip_forward' /etc/sysctl.conf; then
       sed -ri 's|^\s*#?\s*net\.ipv4\.ip_forward\s*=.*|net.ipv4.ip_forward=1|' /etc/sysctl.conf || true
@@ -58,20 +57,16 @@ enable_ip_forward(){
       printf '\nnet.ipv4.ip_forward=1\n' >> /etc/sysctl.conf || true
     fi
   fi
-
-  # Reload all sysctl configs
   sysctl --system >/dev/null 2>&1 || true
 }
 
 ensure_easyrsa(){
   if [ ! -d "$EASYRSA_DIR" ]; then
     mkdir -p "$EASYRSA_DIR"
-    # On many distros, templates live here:
     if [ -d /usr/share/easy-rsa ]; then
       cp -a /usr/share/easy-rsa/* "$EASYRSA_DIR"/
     fi
   fi
-  # Ensure the easyrsa launcher is present
   if [ ! -x "$EASYRSA_DIR/easyrsa" ] && command -v easyrsa >/dev/null 2>&1; then
     ln -sf "$(command -v easyrsa)" "$EASYRSA_DIR/easyrsa"
   fi
@@ -80,9 +75,7 @@ ensure_easyrsa(){
 
 init_pki(){
   cd "$EASYRSA_DIR"
-  if [ ! -d "$PKI_DIR" ]; then
-    ./easyrsa init-pki
-  fi
+  [ -d "$PKI_DIR" ] || ./easyrsa init-pki
 }
 
 build_ca(){
@@ -111,7 +104,6 @@ build_server(){
     openvpn --genkey secret "$TA_KEY"
     chmod 600 "$TA_KEY"
   fi
-  # Make CRL readable by OpenVPN service
   install -m 0644 "$CRL_FILE" /etc/openvpn/server/crl.pem
 }
 
@@ -148,7 +140,6 @@ persist-key
 persist-tun
 
 # If the server key is encrypted (recommended), use askpass
-# The file will contain the server key passphrase (chmod 600)
 askpass $ASKPASS_FILE
 
 explicit-exit-notify 1
@@ -173,11 +164,11 @@ set_askpass(){
 }
 
 start_service(){
-  systemctl enable "openvpn-server@${SERVER_NAME}" >/dev/null 2>&1 || true
+  systemctl enable "openvpn-server@${INSTANCE_NAME}" >/dev/null 2>&1 || true
   systemctl daemon-reload
-  systemctl restart "openvpn-server@${SERVER_NAME}"
+  systemctl restart "openvpn-server@${INSTANCE_NAME}"
   sleep 1
-  systemctl --no-pager --full status "openvpn-server@${SERVER_NAME}" || true
+  systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true
 }
 
 make_client(){
@@ -234,7 +225,7 @@ rebuild_crl(){
   cd "$EASYRSA_DIR"
   ./easyrsa gen-crl
   install -m 0644 "$CRL_FILE" /etc/openvpn/server/crl.pem
-  systemctl restart "openvpn-server@${SERVER_NAME}"
+  systemctl restart "openvpn-server@${INSTANCE_NAME}"
 }
 
 revoke_client(){
@@ -311,9 +302,9 @@ OVPN_DNS_2="${OVPN_DNS_2:-$OVPN_DNS_2_DEFAULT}"
 read -r -p "Server certificate name (CN) [$SERVER_NAME_DEFAULT]: " SERVER_NAME
 SERVER_NAME="${SERVER_NAME:-$SERVER_NAME_DEFAULT}"
 
-# -------- Fixed locations (do not prompt) --------
-ASKPASS_FILE="/etc/openvpn/server/server.pass"
-SERVER_CONF="/etc/openvpn/server/server.conf"
+# -------- Fixed locations (use INSTANCE_NAME for service/config) --------
+ASKPASS_FILE="/etc/openvpn/server/${INSTANCE_NAME}.pass"
+SERVER_CONF="/etc/openvpn/server/${INSTANCE_NAME}.conf"
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
 PKI_DIR="$EASYRSA_DIR/pki"
 TA_KEY="/etc/openvpn/ta.key"
@@ -354,8 +345,8 @@ while true; do
       revoke_client "$CN"
       ;;
     3) list_clients ;;
-    4) systemctl restart "openvpn-server@${SERVER_NAME}"; systemctl --no-pager --full status "openvpn-server@${SERVER_NAME}" || true ;;
-    5) systemctl --no-pager --full status "openvpn-server@${SERVER_NAME}" || true ;;
+    4) systemctl restart "openvpn-server@${INSTANCE_NAME}"; systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
+    5) systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
     6) echo "Done."; exit 0 ;;
     *) echo "Invalid choice." ;;
   esac

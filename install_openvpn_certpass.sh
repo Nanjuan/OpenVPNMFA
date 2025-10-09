@@ -81,8 +81,14 @@ init_pki(){
 build_ca(){
   cd "$EASYRSA_DIR"
   if [ ! -f "$PKI_DIR/private/ca.key" ]; then
+        echo
+    echo ">>> Building the Certificate Authority (CA)"
+    echo "ABOUT THIS PASSWORD (CA KEY):"
+    echo " - You (the admin) will set a passphrase that protects the CA private key (ca.key)."
+    echo " - This CA passphrase is used only when YOU issue or revoke certificates (admin operations)."
+    echo " - OpenVPN server and clients do NOT need this at runtime."
+    echo " - Store it safely (ideally offline). If lost, you cannot issue/revoke certs from this CA."
     echo
-    echo ">>> Building CA (you will be prompted for a CA key passphrase)"
     ./easyrsa build-ca
   fi
 }
@@ -91,7 +97,15 @@ build_server(){
   cd "$EASYRSA_DIR"
   if [ ! -f "$PKI_DIR/issued/${SERVER_NAME}.crt" ]; then
     echo
-    echo ">>> Building server cert/key (you will be prompted for a SERVER key passphrase)"
+    echo ">>> Building the SERVER certificate and encrypted private key"
+    echo "ABOUT THIS PASSWORD (SERVER KEY):"
+    echo " - You will set a passphrase that encrypts the server private key (${SERVER_NAME}.key)."
+    echo " - OpenVPN needs this passphrase every time the service starts (e.g., on reboot or restart)."
+    echo " - In the next step, the script will ask you for THIS SAME passphrase again to save it"
+    echo "   into: /etc/openvpn/server/server.pass (root-only, 600) so systemd can auto-start OpenVPN."
+    echo " - If you choose NOT to save it, the systemd service cannot prompt and will fail to start"
+    echo "   unless you run OpenVPN in the foreground and type the passphrase manually."
+    echo
     ./easyrsa build-server-full "$SERVER_NAME"
   fi
   [ -f "$PKI_DIR/dh.pem" ] || ./easyrsa gen-dh
@@ -149,9 +163,16 @@ EOF
 
 set_askpass(){
   echo
-  echo "The server's private key is encrypted. OpenVPN under systemd needs an askpass file."
-  echo "Enter the SERVER KEY passphrase (stored root-only at $ASKPASS_FILE)."
-  echo "If you prefer to type it manually every boot, leave empty and we will remove 'askpass'."
+  echo
+  echo ">>> Configure askpass for systemd (server key unlock at boot)"
+  echo "ABOUT THIS STEP:"
+  echo " - Enter the SAME passphrase you just set for the SERVER private key."
+  echo " - It will be stored at: $ASKPASS_FILE (root-only, chmod 600)."
+  echo " - This allows 'systemctl start openvpn-server@server' to unlock the server key automatically."
+  echo " - Example use: after a reboot or 'systemctl restart openvpn-server@server', systemd reads this file"
+  echo "   to supply the passphrase non-interactively."
+  echo " - If you leave it blank, the 'askpass' line is removed and the service will NOT auto-start."
+  echo
   read -r -s -p "Server key passphrase: " spass; echo
   if [ -n "$spass" ]; then
     mkdir -p "$(dirname "$ASKPASS_FILE")"
@@ -198,7 +219,14 @@ make_client(){
     echo "Client ${cn} already exists."
   else
     echo
-    echo ">>> Creating client '$cn' (you will be prompted for a CLIENT key passphrase)"
+    echo ">>> Creating client certificate and encrypted private key for: $cn"
+    echo "ABOUT THIS PASSWORD (CLIENT KEY for $cn):"
+    echo " - You will set a passphrase that encrypts $cn's private key (${cn}.key)."
+    echo " - The USER ($cn) will be prompted for this passphrase whenever they connect"
+    echo "   using their .ovpn profile in the OpenVPN app (desktop or mobile)."
+    echo " - The server does NOT know this passphrase; if it’s forgotten, you’ll need to"
+    echo "   issue a new client certificate/key for the user."
+    echo
     ./easyrsa build-client-full "$cn"
   fi
 }

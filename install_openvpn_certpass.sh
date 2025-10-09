@@ -171,6 +171,10 @@ start_service(){
   systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true
 }
 
+is_service_running(){
+  systemctl is-active --quiet "openvpn-server@${INSTANCE_NAME}"
+}
+
 make_client(){
   local cn="$1"
   cd "$EASYRSA_DIR"
@@ -262,8 +266,55 @@ show_menu(){
 MENU
 }
 
+# ---------------------- Fixed locations ----------------------
+ASKPASS_FILE="/etc/openvpn/server/${INSTANCE_NAME}.pass"
+SERVER_CONF="/etc/openvpn/server/${INSTANCE_NAME}.conf"
+EASYRSA_DIR="/etc/openvpn/easy-rsa"
+PKI_DIR="$EASYRSA_DIR/pki"
+TA_KEY="/etc/openvpn/ta.key"
+CRL_FILE="$PKI_DIR/crl.pem"
+OUTPUT_DIR="/root/openvpn-clients"
+
 # ---------------------- Main ----------------------
 need_root
+
+# If OpenVPN service is already running, skip install and go straight to manager
+if is_service_running; then
+  echo "Detected running OpenVPN service: openvpn-server@${INSTANCE_NAME}"
+  echo "Skipping installation and entering manager..."
+  while true; do
+    show_menu
+    read -r -p "Select: " choice
+    case "$choice" in
+      1)
+        read -r -p "Client name (CN): " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        make_client "$CN"
+        # Try to guess the public IP for profile convenience
+        GUESS_IP=$(hostname -I | awk '{print $1}')
+        read -r -p "Public IP/DNS for client profile [$GUESS_IP]: " PROFILE_REMOTE_IP
+        PROFILE_REMOTE_IP="${PROFILE_REMOTE_IP:-$GUESS_IP}"
+        read -r -p "OpenVPN port [1194]: " OVPN_PORT
+        OVPN_PORT="${OVPN_PORT:-1194}"
+        read -r -p "Protocol (udp/tcp) [udp]: " OVPN_PROTO
+        OVPN_PROTO="${OVPN_PROTO:-udp}"
+        inline_ovpn "$CN" "$PROFILE_REMOTE_IP" "$OVPN_PORT" "$OVPN_PROTO"
+        ;;
+      2)
+        read -r -p "Client name (CN) to revoke: " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        revoke_client "$CN"
+        ;;
+      3) list_clients ;;
+      4) systemctl restart "openvpn-server@${INSTANCE_NAME}"; systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
+      5) systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
+      6) echo "Done."; exit 0 ;;
+      *) echo "Invalid choice." ;;
+    esac
+  done
+fi
+
+# Not running: proceed with installation
 detect_pkg
 pkg_install
 
@@ -301,15 +352,6 @@ OVPN_DNS_2="${OVPN_DNS_2:-$OVPN_DNS_2_DEFAULT}"
 
 read -r -p "Server certificate name (CN) [$SERVER_NAME_DEFAULT]: " SERVER_NAME
 SERVER_NAME="${SERVER_NAME:-$SERVER_NAME_DEFAULT}"
-
-# -------- Fixed locations (use INSTANCE_NAME for service/config) --------
-ASKPASS_FILE="/etc/openvpn/server/${INSTANCE_NAME}.pass"
-SERVER_CONF="/etc/openvpn/server/${INSTANCE_NAME}.conf"
-EASYRSA_DIR="/etc/openvpn/easy-rsa"
-PKI_DIR="$EASYRSA_DIR/pki"
-TA_KEY="/etc/openvpn/ta.key"
-CRL_FILE="$PKI_DIR/crl.pem"
-OUTPUT_DIR="/root/openvpn-clients"
 
 # -------- Proceed with setup --------
 ensure_dirs

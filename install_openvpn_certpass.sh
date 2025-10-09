@@ -175,6 +175,22 @@ is_service_running(){
   systemctl is-active --quiet "openvpn-server@${INSTANCE_NAME}"
 }
 
+# ---------- Settings discovery for client generation ----------
+detect_public_ip(){
+  curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}'
+}
+
+get_server_port(){
+  [ -f "$SERVER_CONF" ] || { echo "1194"; return; }
+  awk '/^port[[:space:]]+/ {print $2; found=1} END{if(!found) print "1194"}' "$SERVER_CONF"
+}
+
+get_server_proto(){
+  [ -f "$SERVER_CONF" ] || { echo "udp"; return; }
+  awk '/^proto[[:space:]]+/ {print $2; found=1} END{if(!found) print "udp"}' "$SERVER_CONF"
+}
+
+# ---------- Client management ----------
 make_client(){
   local cn="$1"
   cd "$EASYRSA_DIR"
@@ -290,15 +306,10 @@ if is_service_running; then
         read -r -p "Client name (CN): " CN
         [ -z "$CN" ] && { echo "No CN provided."; continue; }
         make_client "$CN"
-        # Try to guess the public IP for profile convenience
-        GUESS_IP=$(hostname -I | awk '{print $1}')
-        read -r -p "Public IP/DNS for client profile [$GUESS_IP]: " PROFILE_REMOTE_IP
-        PROFILE_REMOTE_IP="${PROFILE_REMOTE_IP:-$GUESS_IP}"
-        read -r -p "OpenVPN port [1194]: " OVPN_PORT
-        OVPN_PORT="${OVPN_PORT:-1194}"
-        read -r -p "Protocol (udp/tcp) [udp]: " OVPN_PROTO
-        OVPN_PROTO="${OVPN_PROTO:-udp}"
-        inline_ovpn "$CN" "$PROFILE_REMOTE_IP" "$OVPN_PORT" "$OVPN_PROTO"
+        RIP="$(detect_public_ip)"
+        RPORT="$(get_server_port)"
+        RPROTO="$(get_server_proto)"
+        inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
         ;;
       2)
         read -r -p "Client name (CN) to revoke: " CN
@@ -379,7 +390,10 @@ while true; do
       read -r -p "Client name (CN): " CN
       [ -z "$CN" ] && { echo "No CN provided."; continue; }
       make_client "$CN"
-      inline_ovpn "$CN" "$PROFILE_REMOTE_IP" "$OVPN_PORT" "$OVPN_PROTO"
+      RIP="$(detect_public_ip)"
+      RPORT="$(get_server_port)"
+      RPROTO="$(get_server_proto)"
+      inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
       ;;
     2)
       read -r -p "Client name (CN) to revoke: " CN

@@ -275,7 +275,7 @@ Provided as-is without warranty. Test in non-production before deploying.
 
 ## Changelog (Toolkit)
 
-* **v2 (current):**
+* **v1 (current):**
 
   * Split installers: **cert-only** (no networking) and **cert+pass** (with optional auto-unlock)
   * Added **networking-setup** helper (forwarding, NAT, persistence, autostart)

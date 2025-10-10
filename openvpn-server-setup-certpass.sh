@@ -2,6 +2,10 @@
 # openvpn-cert-pass-installer.sh
 # OpenVPN server with certificate-only auth and passphrase-protected keys (no PAM)
 # Ubuntu/Debian and RHEL/Rocky/Alma supported. Requires systemd.
+#
+# Author: Nestor Torres
+# Created: October 2025
+# Version: 1
 set -euo pipefail
 
 # ---------------------- Constants ----------------------

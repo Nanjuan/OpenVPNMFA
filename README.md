@@ -1,5 +1,9 @@
 # OpenVPN Server Toolkit (Cert-Only, Cert+Pass, Networking, Uninstall)
 
+**Author:** Nestor Torres  
+**Created:** October 2025  
+**Version:** 1
+
 A small toolkit of interactive bash scripts to **install, manage, network-configure, and uninstall** an OpenVPN server on Debian/Ubuntu and RHEL-like systems.
 
 ---

@@ -2,6 +2,10 @@
 # networking-setup.sh
 # Network-only helper for OpenVPN: forwarding, NAT, persistence, autostart, and config inspection.
 # Works on Ubuntu/Debian and RHEL-like systems. Requires root.
+#
+# Author: Nestor Torres
+# Created: October 2025
+# Version: 1
 
 set -euo pipefail
 

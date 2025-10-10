@@ -2,6 +2,10 @@
 # openvpn-cert-only-setup.sh (REFORMATTED UI TO MATCH SCRIPT #1)
 # OpenVPN server install (Certificate-Only auth), NO networking/firewall config.
 # Minimal deps install: openvpn, easy-rsa, curl, ca-certificates
+#
+# Author: Nestor Torres
+# Created: October 2025
+# Version: 1
 set -euo pipefail
 
 # ---------------------- Constants/Paths ------------------

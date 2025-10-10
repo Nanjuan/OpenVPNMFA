@@ -6,6 +6,10 @@
 #   3) networking-setup.sh  (forwarding, NAT, persistence, autostart)
 #
 # Supports Debian/Ubuntu (apt) and RHEL/Rocky/Alma (dnf/yum).
+#
+# Author: Nestor Torres
+# Created: October 2025
+# Version: 1
 set -euo pipefail
 
 # ---------------------- Constants/Paths ----------------------

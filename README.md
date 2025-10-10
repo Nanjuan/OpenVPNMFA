@@ -1,351 +1,279 @@
-# OpenVPN Server Setup v2.0
+# OpenVPN Server Toolkit (Cert-Only, Cert+Pass, Networking, Uninstall)
 
-A comprehensive OpenVPN installation and management script for Ubuntu with latest security practices and user management functionality.
+A small toolkit of interactive bash scripts to **install, manage, network-configure, and uninstall** an OpenVPN server on Debian/Ubuntu and RHEL-like systems.
 
-## Features
+---
 
-- **Latest Version Support**: Ubuntu 24.04+ and OpenVPN 2.6.12+ compatible
-- **Secure Installation**: Implements industry best practices for OpenVPN security
-- **Dedicated User**: Creates secure `openvpn` system user with proper permissions
-- **EasyRSA Integration**: Automated certificate authority setup with Easy-RSA 3.1.0+
-- **User Management**: Add, remove, and renew VPN users easily
-- **Firewall Configuration**: Automatic UFW setup (no iptables-persistent conflicts)
-- **Client Configuration**: Automatic generation of client .ovpn files
-- **Backup System**: Built-in configuration backup functionality
-- **Monitoring**: Enhanced logging and status monitoring capabilities
+## What’s Included
 
-## Security Features
+| Script                           | Purpose                                                                                                  | Auth model                                                                          | Distro support                           |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------- |
+| `openvpn-cert-only-setup.sh`     | Install OpenVPN server + PKI (no firewall/NAT changes) and manage clients via menu                       | **Certificate-only** (server & clients **without** passphrases)                     | apt (Debian/Ubuntu)                      |
+| `openvpn-cert-pass-installer.sh` | Install OpenVPN server + PKI, **enable IP forwarding**, optional auto-unlock, manage clients via menu    | **Certificate-only**; **server key encrypted** (askpass); **client keys encrypted** | apt, dnf, yum (Deb/Ubuntu & RHEL family) |
+| `networking-setup.sh`            | Add **forwarding + NAT (iptables)**, persist firewall rules, optional autostart, show status             | —                                                                                   | apt, dnf, yum                            |
+| `openvpn-uninstall-manager.sh`   | **Interactive uninstaller**: remove artifacts from the above scripts and optionally purge packages/users | —                                                                                   | apt, dnf, yum                            |
 
-- **Strong Encryption**: AES-256-GCM cipher with SHA512 authentication
-- **Perfect Forward Secrecy**: TLS-Crypt implementation
-- **Certificate Revocation**: CRL (Certificate Revocation List) support
-- **TLS 1.2+**: Minimum TLS version enforcement
-- **Strong DH Parameters**: 4096-bit Diffie-Hellman parameters
-- **ECDSA Support**: secp384r1 curve for enhanced security
+---
 
-## Installation
+## Features at a Glance
 
-### Prerequisites
+* Easy-RSA 3 PKI (CA, server, clients) with CRL support
+* Generates inline **`.ovpn`** profiles (embeds CA/cert/key/tls-crypt)
+* Systemd service: `openvpn-server@server`
+* Sensible defaults: `1194/udp`, VPN `10.8.0.0/24`, Google/Cloudflare DNS (per script)
+* Optional **server key passphrase** with **askpass** auto-unlock (Script 2)
+* Optional **networking helper** to enable IPv4 forwarding, NAT, and persistence across reboots
+* **Uninstall manager** rolls back configs, sysctl changes, NAT rules, and persistence
 
-- Ubuntu 20.04+ (24.04 LTS recommended)
-- Root or sudo access
-- Internet connection
+---
 
-### Quick Installation
+## Requirements
 
-```bash
-# Download and run the v2.0 installation script
-wget https://raw.githubusercontent.com/your-repo/openvpn-server-setup-v2.sh
-chmod +x openvpn-server-setup-v2.sh
-sudo ./openvpn-server-setup-v2.sh
-```
+* **Root** (or sudo)
+* **OpenVPN 2.5+** recommended
+* **Debian/Ubuntu** (apt) for all scripts; **RHEL/Rocky/Alma** (dnf/yum) supported by Script 2 + networking/uninstall
+* Internet access during install
 
-### Manual Installation
+---
+
+## Quick Start
+
+### A) Simple install, no firewall changes (good for labs)
 
 ```bash
-# Clone or download the script
-git clone https://github.com/your-repo/OpenVPNMFA.git
-cd OpenVPNMFA
-
-# Make executable and run
-chmod +x openvpn-server-setup-v2.sh
-sudo ./openvpn-server-setup-v2.sh
+sudo ./openvpn-cert-only-setup.sh
+# Follow prompts, then use the menu to add a client and produce .ovpn
 ```
 
-## Usage
-
-### Initial Setup
-
-1. **Install OpenVPN Server** (will prompt for openvpn user password):
-   ```bash
-   sudo ./openvpn-server-setup-v2.sh
-   ```
-
-2. **Add your first user**:
-   ```bash
-   sudo openvpn-manage add username
-   ```
-
-3. **Download client configuration**:
-   ```bash
-   # The .ovpn file will be created in /etc/openvpn/clients/
-   sudo cp /etc/openvpn/clients/username.ovpn /tmp/
-   sudo chown $USER:$USER /tmp/username.ovpn
-   ```
-
-### User Management
-
-The script includes a management tool at `/usr/local/bin/openvpn-manage`:
-
-#### Add a new user
-```bash
-sudo openvpn-manage add john_doe
-```
-
-#### Remove a user
-```bash
-sudo openvpn-manage remove john_doe
-```
-
-#### Renew user certificate
-```bash
-sudo openvpn-manage renew john_doe
-```
-
-#### List all users
-```bash
-sudo openvpn-manage list
-```
-
-#### Check server status
-```bash
-sudo openvpn-manage status
-```
-
-#### View recent logs
-```bash
-sudo openvpn-manage logs
-```
-
-#### Test configuration
-```bash
-sudo openvpn-manage test
-```
-
-#### Create backup
-```bash
-sudo openvpn-manage backup
-```
-
-#### Restart service
-```bash
-sudo openvpn-manage restart
-```
-
-#### Quick status check
-```bash
-sudo openvpn-status
-```
-
-## Configuration Details
-
-### Network Settings
-- **VPN Network**: 10.8.0.0/24
-- **Port**: 1194 (UDP)
-- **Protocol**: UDP
-- **DNS**: Google DNS (8.8.8.8, 8.8.4.4)
-
-### Security Configuration
-- **Cipher**: AES-256-GCM
-- **Authentication**: SHA512
-- **TLS Version**: 1.2+
-- **Key Size**: 4096 bits
-- **DH Parameters**: 4096 bits
-- **TLS-Crypt**: Enabled for additional security
-
-### File Locations
-- **Server Config**: `/etc/openvpn/server.conf`
-- **Certificates**: `/etc/openvpn/easy-rsa/pki/`
-- **Client Configs**: `/etc/openvpn/clients/`
-- **Logs**: `/var/log/openvpn/`
-- **Backups**: `/etc/openvpn/backup/`
-- **Management**: `/usr/local/bin/openvpn-manage`
-- **Status**: `/usr/local/bin/openvpn-status`
-
-## Client Setup
-
-### Download Client Configuration
-After adding a user, download the `.ovpn` file:
+### B) Server & client key passphrases + system IP forwarding (production-leaning)
 
 ```bash
-# Copy the client configuration to your local machine
-sudo cp /etc/openvpn/clients/username.ovpn /home/user/
-sudo chown user:user /home/user/username.ovpn
+sudo ./openvpn-cert-pass-installer.sh
+# You'll set CA, server, and client key passphrases.
+# Optionally save the server key passphrase to /etc/openvpn/server/server.pass for auto-start.
 ```
 
-### Client Installation
-
-#### Windows
-1. Download OpenVPN GUI from https://openvpn.net/
-2. Install and import the `.ovpn` file
-3. Connect to the VPN
-
-#### macOS
-1. Install Tunnelblick from https://tunnelblick.net/
-2. Import the `.ovpn` file
-3. Connect to the VPN
-
-#### Linux
-1. Install OpenVPN client:
-   ```bash
-   sudo apt install openvpn
-   ```
-2. Connect using the configuration:
-   ```bash
-   sudo openvpn --config username.ovpn
-   ```
-
-#### Mobile (Android/iOS)
-1. Install OpenVPN Connect app
-2. Import the `.ovpn` file
-3. Connect to the VPN
-
-## Firewall Configuration
-
-The script automatically configures:
-- UFW firewall rules
-- IP forwarding
-- NAT masquerading for VPN traffic
-- Port 1194/UDP access
-
-### Manual Firewall Rules
-If you need to add custom rules:
+### (Optional) Configure networking (forwarding & NAT)
 
 ```bash
-# Allow specific ports
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 80/tcp    # HTTP
-sudo ufw allow 443/tcp   # HTTPS
-
-# Allow VPN port
-sudo ufw allow 1194/udp  # OpenVPN
+sudo ./networking-setup.sh
+# Choose "Full network setup" for forwarding + NAT + persistence
+# or "Add new route" to add additional VPN CIDR/WAN pairs
 ```
 
-## Monitoring and Troubleshooting
-
-### Check Server Status
-```bash
-sudo systemctl status openvpn@server
-sudo openvpn-manage status
-```
-
-### View Logs
-```bash
-# Server logs
-sudo tail -f /var/log/openvpn/openvpn.log
-
-# Status logs
-sudo tail -f /var/log/openvpn/openvpn-status.log
-```
-
-### Common Issues
-
-#### 1. Connection Refused
-- Check if OpenVPN service is running: `sudo systemctl status openvpn@server`
-- Verify firewall rules: `sudo ufw status`
-- Check if port 1194 is open: `sudo netstat -tulpn | grep 1194`
-
-#### 2. Certificate Issues
-- Verify certificates exist: `ls -la /etc/openvpn/easy-rsa/pki/issued/`
-- Check certificate validity: `openssl x509 -in /etc/openvpn/easy-rsa/pki/issued/username.crt -text -noout`
-
-#### 3. Client Cannot Connect
-- Verify client configuration file
-- Check server IP address in client config
-- Ensure client has internet access
-
-## Backup and Recovery
-
-### Create Backup
-```bash
-sudo openvpn-manage backup
-```
-
-### Restore from Backup
-```bash
-# Extract backup
-sudo tar -xzf /etc/openvpn/backup/openvpn-backup-YYYYMMDD-HHMMSS.tar.gz -C /tmp/
-
-# Restore PKI
-sudo cp -r /tmp/openvpn-backup-YYYYMMDD-HHMMSS/pki/* /etc/openvpn/easy-rsa/pki/
-
-# Restore server config
-sudo cp /tmp/openvpn-backup-YYYYMMDD-HHMMSS/server.conf /etc/openvpn/
-
-# Restart service
-sudo systemctl restart openvpn@server
-```
-
-## Security Best Practices
-
-1. **Regular Updates**: Keep the system and OpenVPN updated
-2. **Certificate Rotation**: Renew certificates annually
-3. **Monitor Logs**: Regularly check for suspicious activity
-4. **Backup Certificates**: Keep secure backups of CA and certificates
-5. **Firewall Rules**: Regularly audit firewall configuration
-6. **User Management**: Remove unused user accounts promptly
-
-## Advanced Configuration
-
-### Custom Server Configuration
-Edit `/etc/openvpn/server.conf` for custom settings:
+### Uninstall / Rollback
 
 ```bash
-sudo nano /etc/openvpn/server.conf
-sudo systemctl restart openvpn@server
+sudo ./openvpn-uninstall-manager.sh
+# Choose the item to remove:
+# 1) cert-only setup, 2) cert+pass installer, or 3) networking setup
+# Toggle: purge packages, remove user, purge networking packages.
 ```
 
-### Multiple Server Instances
-To run multiple OpenVPN servers:
+---
+
+## Script Details
+
+### `openvpn-cert-only-setup.sh`
+
+* Installs: `openvpn`, `easy-rsa`, `curl`, `ca-certificates`
+* Builds CA, server, and client certs **without passphrases**
+* Writes server config: **`/etc/openvpn/server/server.conf`**
+* **No networking changes** (no iptables/UFW/sysctl)
+* Runtime paths:
+
+  * PKI: `/etc/openvpn/easy-rsa/`
+  * Logs: `/var/log/openvpn/`
+  * Temp: `/var/run/openvpn-tmp` (via `tmp-dir`)
+  * **Client profiles**: **`/etc/openvpn/clients/`**
+* Menu: Add / Revoke / List clients, restart/status, export `.ovpn`
+
+**Security defaults**
+
+* `data-ciphers`: AES-256-GCM (fallback AES-256-GCM)
+* `auth`: **SHA512**
+* `tls-version-min`: **1.2**
+* `tls-crypt`: enabled; DH used
+
+---
+
+### `openvpn-cert-pass-installer.sh`
+
+* Supports **apt/dnf/yum**
+* Enables **IPv4 forwarding** and persists `net.ipv4.ip_forward=1`
+* Builds CA, **server key with passphrase** (askpass optional), and **client keys with passphrases**
+* Server config: **`/etc/openvpn/server/server.conf`** (includes `askpass` if saved)
+* tls-crypt key at **`/etc/openvpn/ta.key`**
+* **Client profiles**: **`/root/openvpn-clients/`**
+* Menu: Add / Revoke / List clients, restart/status, export `.ovpn`
+
+**Security defaults**
+
+* `data-ciphers`: AES-256-GCM (fallback AES-256-GCM)
+* `auth`: **SHA256**
+* `tls-version-min`: **1.2**
+* `tls-crypt`, DH, **CRL** at `/etc/openvpn/server/crl.pem`
+* Optional **askpass** at `/etc/openvpn/server/server.pass` (0600)
+
+> If you do **not** save the server key passphrase to `server.pass`, systemd cannot prompt at boot and the service will not auto-start. Start OpenVPN in the foreground to type the passphrase.
+
+---
+
+### `networking-setup.sh`
+
+* Adds/updates:
+
+  * **IPv4 forwarding** via `/etc/sysctl.d/99-openvpn-ipforward.conf`
+  * **NAT & FORWARD** iptables rules (MASQUERADE + return path)
+  * **Persistence** via:
+
+    * `netfilter-persistent` (Debian/Ubuntu), or
+    * `iptables-services` (RHEL), or
+    * fallback `iptables-restore.service` + `/etc/iptables/rules.v4`
+  * Optional **autostart** of `openvpn-server@server`
+* “Show current configuration” reports forwarding state, WAN iface, detected VPN CIDR(s), rules, and persistence status
+
+---
+
+### `openvpn-uninstall-manager.sh`
+
+* Interactive removal for:
+
+  1. **`openvpn-cert-only-setup.sh`**
+  2. **`openvpn-cert-pass-installer.sh`**
+  3. **`networking-setup.sh`**
+* Toggles (with colored status):
+
+  * **Purge OpenVPN packages** (apt/dnf/yum)
+  * **Remove `openvpn` user/group**
+  * **Purge networking packages** (`iptables-persistent` / `netfilter-persistent` or `iptables-services`)
+* Cleans:
+
+  * Stops/disables `openvpn-server@server`
+  * Removes server configs, PKI, logs, `ipp.txt`, temp dirs
+  * Deletes Script-2 artifacts: `server.pass`, `ta.key`, `crl.pem`
+  * Reverts **IP forwarding** and drop-ins
+  * Deletes **iptables NAT/FORWARD** rules matching known VPN CIDRs parsed from server configs; offers to remove remaining MASQUERADE rules
+  * Removes persistence files/units (`/etc/iptables/rules.v4`, `iptables-restore.service`, RHEL `/etc/sysconfig/iptables`)
+
+---
+
+## Paths & Files
+
+| Purpose          | Path                                                                           |
+| ---------------- | ------------------------------------------------------------------------------ |
+| Server config    | `/etc/openvpn/server/server.conf`                                              |
+| PKI (Easy-RSA)   | `/etc/openvpn/easy-rsa/`                                                       |
+| CRL (Script 2)   | `/etc/openvpn/server/crl.pem`                                                  |
+| tls-crypt key    | Script 1: in PKI; **Script 2:** `/etc/openvpn/ta.key`                          |
+| Logs             | `/var/log/openvpn/`                                                            |
+| Pool persistence | `/etc/openvpn/server/ipp.txt`                                                  |
+| Temp (Script 1)  | `/var/run/openvpn-tmp`                                                         |
+| Temp (Script 2)  | `/etc/openvpn/tmp`                                                             |
+| Client profiles  | **Script 1:** `/etc/openvpn/clients/` • **Script 2:** `/root/openvpn-clients/` |
+
+---
+
+## Common Tasks
+
+### Start / Status
 
 ```bash
-# Copy server configuration
-sudo cp /etc/openvpn/server.conf /etc/openvpn/server2.conf
-
-# Edit port and network settings
-sudo nano /etc/openvpn/server2.conf
-
-# Enable and start second server
-sudo systemctl enable openvpn@server2
-sudo systemctl start openvpn@server2
+sudo systemctl restart openvpn-server@server
+sudo systemctl status openvpn-server@server
 ```
+
+### Add a client (from either installer’s menu)
+
+Run the installer again; if the service is running it drops into the **manager**.
+The `.ovpn` file is written to the directory listed in **Paths & Files** above.
+
+### Copy a client profile to your user
+
+```bash
+# Example for Script 1
+sudo cp /etc/openvpn/clients/alice.ovpn /home/$USER/
+sudo chown $USER:$USER /home/$USER/alice.ovpn
+```
+
+### Client connection (Linux CLI)
+
+```bash
+sudo apt-get install -y openvpn
+sudo openvpn --config alice.ovpn
+```
+
+---
+
+## Security Notes
+
+* **Passphrases (Script 2):**
+
+  * **CA key passphrase** guards admin actions (issue/revoke)
+  * **Server key passphrase** protects the server private key (store in `server.pass` only if necessary; chmod 600)
+  * **Client key passphrases** are prompted at connection time on client devices
+* **TLS & crypto:** TLS 1.2 minimum, `tls-crypt`, DH; Script 1 uses `auth SHA512`, Script 2 uses `auth SHA256`
+* **Backups:** Securely back up `/etc/openvpn/easy-rsa/pki/` (especially `ca.key`)
+
+---
 
 ## Troubleshooting
 
-### Debug Mode
-Enable verbose logging by editing the server configuration:
+* **Connected but no internet via VPN**
 
-```bash
-sudo nano /etc/openvpn/server.conf
-# Change verb 3 to verb 6 for more detailed logs
-sudo systemctl restart openvpn@server
-```
+  * Run **`networking-setup.sh`** → “Full network setup”
+  * Verify MASQUERADE for your VPN CIDR, and `sysctl net.ipv4.ip_forward` is `1`
 
-### Test Configuration
-```bash
-# Test server configuration
-sudo openvpn --config /etc/openvpn/server.conf --test-crypto
+* **Service won’t auto-start after reboot (Script 2)**
 
-# Test client configuration
-sudo openvpn --config /path/to/client.ovpn --test-crypto
-```
+  * Ensure `/etc/openvpn/server/server.pass` contains the correct passphrase,
+    or start OpenVPN in the foreground to enter it interactively
 
-## Support
+* **NAT rules remain after uninstall**
 
-For issues and questions:
-1. Check the logs: `/var/log/openvpn/`
-2. Verify configuration: `sudo openvpn --config /etc/openvpn/server.conf --test-crypto`
-3. Check system status: `sudo systemctl status openvpn@server`
+  * Run **`openvpn-uninstall-manager.sh`** → “Uninstall networking-setup.sh”
+  * Allow it to delete remaining MASQUERADE rules if appropriate
+
+* **Where is my `.ovpn`?**
+
+  * Script 1: `/etc/openvpn/clients/`
+  * Script 2: `/root/openvpn-clients/`
+
+---
+
+## Example Workflows
+
+### Minimal lab (no system networking)
+
+1. `sudo ./openvpn-cert-only-setup.sh`
+2. Add a client from the menu
+3. Route traffic upstream or add routes manually (no iptables changes by this script)
+
+### Production-leaning with NAT & auto-start
+
+1. `sudo ./openvpn-cert-pass-installer.sh` → optionally save server passphrase to `server.pass`
+2. `sudo ./networking-setup.sh` → “Full network setup”
+3. Verify: `sysctl net.ipv4.ip_forward`, `iptables -t nat -S | grep MASQUERADE`, client connectivity
+
+### Clean removal
+
+1. `sudo ./openvpn-uninstall-manager.sh`
+2. Choose the installer used and/or networking removal
+3. (Optional) Toggle: purge packages, remove `openvpn` user, purge networking packages
+
+---
 
 ## License
 
-This script is provided as-is for educational and production use. Please review and test thoroughly before deploying in production environments.
+Provided as-is without warranty. Test in non-production before deploying.
 
-## Files Included
+---
 
-- **`openvpn-server-setup-v2.sh`** - Main installation script (v2.0)
-- **`openvpn-uninstall-v2.sh`** - Uninstall script with options
-- **`README.md`** - This comprehensive guide
-- **`INSTALL.md`** - Quick installation guide
-- **`QUICK_START_V2.md`** - Quick reference commands
-- **`REMOTE_DEPLOYMENT.md`** - Remote server deployment guide
+## Changelog (Toolkit)
 
-## Changelog
+* **v2 (current):**
 
-- **v2.0**: Complete rewrite with latest Ubuntu/OpenVPN support
-  - Ubuntu 24.04+ and OpenVPN 2.6.12+ compatibility
-  - Dedicated `openvpn` system user with proper permissions
-  - Enhanced security with AES-256-GCM and TLS 1.2+
-  - Modern GPG key management (no apt-key errors)
-  - UFW-only firewall (no iptables-persistent conflicts)
-  - Comprehensive management tools and monitoring
+  * Split installers: **cert-only** (no networking) and **cert+pass** (with optional auto-unlock)
+  * Added **networking-setup** helper (forwarding, NAT, persistence, autostart)
+  * Added **uninstall manager** with distro-aware package purging and NAT/sysctl rollback
+  * Improved client management menus and inline profile generation

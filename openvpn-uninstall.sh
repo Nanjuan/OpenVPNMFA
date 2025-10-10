@@ -3,8 +3,7 @@
 # Interactive uninstaller for:
 #   1) openvpn-cert-only-setup.sh
 #   2) openvpn-cert-pass-installer.sh
-#   3) BOTH
-#   4) networking-setup.sh  (forwarding, NAT, persistence, autostart)
+#   3) networking-setup.sh  (forwarding, NAT, persistence, autostart)
 #
 # Supports Debian/Ubuntu (apt) and RHEL/Rocky/Alma (dnf/yum).
 set -euo pipefail
@@ -49,6 +48,15 @@ need_root(){ [ "$(id -u)" -eq 0 ] || die "Run as root."; }
 PURGE_PACKAGES=false
 REMOVE_USER=false
 REMOVE_NETWORKING_PKGS=false
+
+state_color(){
+  # Usage: state_color true|false  -> prints colored ENABLED/DISABLED
+  if [[ "${1:-false}" == true ]]; then
+    echo -e "${GREEN}ENABLED${NC}"
+  else
+    echo -e "${RED}DISABLED${NC}"
+  fi
+}
 
 # ---------------------- Helpers -----------------------------
 prompt_yn(){
@@ -102,10 +110,6 @@ collect_vpn_cidrs(){
       [ -n "${bits:-}" ] && echo "${net}/${bits}"
     done < <(awk '/^server[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $0}' "$conf")
   done < <(find "$OPENVPN_DIR" -type f -name "*.conf" -print0 2>/dev/null || true)
-}
-
-default_iface(){
-  ip route show default 2>/dev/null | awk '/default/ {print $5; exit}'
 }
 
 have_cmd(){ command -v "$1" >/dev/null 2>&1; }
@@ -199,25 +203,28 @@ remove_network_persistence(){
 }
 
 purge_packages_if_requested(){
-  $PURGE_PACKAGES || { info "Package purge: SKIPPED"; return; }
+  if [[ "$PURGE_PACKAGES" != true ]]; then
+    info "Package purge: $(state_color false)"
+    return
+  fi
   log "Purging OpenVPN-related packages..."
   systemctl stop openvpn 2>/dev/null || true
 
   detect_pkg
-  case "$PKG" in
+  case "${PKG:-}" in
     apt)
       apt-get purge -y openvpn easy-rsa libpam-google-authenticator 2>/dev/null || true
-      $REMOVE_NETWORKING_PKGS && apt-get purge -y iptables-persistent netfilter-persistent 2>/dev/null || true
+      [[ "$REMOVE_NETWORKING_PKGS" == true ]] && apt-get purge -y iptables-persistent netfilter-persistent 2>/dev/null || true
       apt-get autoremove -y 2>/dev/null || true
       apt-get update -y 2>/dev/null || true
       ;;
     dnf)
       dnf remove -y openvpn easy-rsa || true
-      $REMOVE_NETWORKING_PKGS && dnf remove -y iptables-services || true
+      [[ "$REMOVE_NETWORKING_PKGS" == true ]] && dnf remove -y iptables-services || true
       ;;
     yum)
       yum remove -y openvpn easy-rsa || true
-      $REMOVE_NETWORKING_PKGS && yum remove -y iptables-services || true
+      [[ "$REMOVE_NETWORKING_PKGS" == true ]] && yum remove -y iptables-services || true
       ;;
     *)
       warn "No supported package manager found for purge."
@@ -226,7 +233,10 @@ purge_packages_if_requested(){
 }
 
 remove_user_if_requested(){
-  $REMOVE_USER || { info "User removal: SKIPPED"; return; }
+  if [[ "$REMOVE_USER" != true ]]; then
+    info "User removal: $(state_color false)"
+    return
+  fi
   if id -u openvpn >/dev/null 2>&1; then
     info "Removing user 'openvpn'..."
     userdel -r openvpn 2>/dev/null || true
@@ -271,7 +281,7 @@ remove_networking_setup(){
   revert_sysctl_ipfwd
 
   # 2) Derive known VPN CIDRs from any server.conf found and delete their rules
-  declare -A seen=()
+  declare -A seen
   while read -r cidr; do
     [ -n "$cidr" ] || continue
     [[ -n "${seen[$cidr]:-}" ]] && continue
@@ -279,7 +289,7 @@ remove_networking_setup(){
     delete_nat_forward_rules_for_cidr "$cidr"
   done < <(collect_vpn_cidrs || true)
 
-  # 3) Offer to delete any remaining MASQUERADE rules (covers custom CIDRs added via "Add new route")
+  # 3) Offer to delete any remaining MASQUERADE rules (covers custom CIDRs added via menu)
   prompt_delete_remaining_masq
 
   # 4) Remove persistence (netfilter-persistent, iptables-restore.service, iptables-services files)
@@ -289,25 +299,25 @@ remove_networking_setup(){
   systemctl disable "openvpn-server@${INSTANCE_NAME}" 2>/dev/null || true
 }
 
-# ---------------------- Detection --------------------------
+# ---------------------- Detection (FIXED: initialize vars) --
 detect_install_type(){
-  # Returns one of: "script1" "script2" "both" "networking" "unknown"
-  local s1 s2 net
-  [ -d "$TMP_SCRIPT1" ] && s1=1
-  [ -f "$ASKPASS_FILE" ] && s2=1
-  [ -f "$TA_KEY_SCRIPT2" ] && s2=1
-  [ -f "$SYSCTL_DROPIN" ] && net=1
-  [ -f "$IPTABLES_RESTORE_UNIT" ] && net=1
-  [ -f "$RHEL_RULES_V4" ] && net=1
-  [ -f "$IPTABLES_RULES_V4" ] && net=1
+  # Returns one of: "script1" "script2" "networking" "unknown"
+  local s1=0 s2=0 net=0
 
-  if [[ "$s1" == "1" && "$s2" == "1" ]]; then echo "both"; return; fi
-  if [[ "$s1" == "1" ]]; then echo "script1"; return; fi
-  if [[ "$s2" == "1" ]]; then echo "script2"; return; fi
-  if [[ "$net" == "1" ]]; then echo "networking"; return; fi
+  [[ -d "$TMP_SCRIPT1" ]] && s1=1
+  [[ -f "$ASKPASS_FILE" ]] && s2=1
+  [[ -f "$TA_KEY_SCRIPT2" ]] && s2=1
+  [[ -f "$SYSCTL_DROPIN" ]] && net=1
+  [[ -f "$IPTABLES_RESTORE_UNIT" ]] && net=1
+  [[ -f "$RHEL_RULES_V4" ]] && net=1
+  [[ -f "$IPTABLES_RULES_V4" ]] && net=1
+
+  if [[ $s1 -eq 1 ]]; then echo "script1"; return; fi
+  if [[ $s2 -eq 1 ]]; then echo "script2"; return; fi
+  if [[ $net -eq 1 ]]; then echo "networking"; return; fi
 
   # Fallback to config hints
-  if [ -f "$SERVER_DIR/${INSTANCE_NAME}.conf" ]; then
+  if [[ -f "$SERVER_DIR/${INSTANCE_NAME}.conf" ]]; then
     if grep -qE '^\s*askpass\s+' "$SERVER_DIR/${INSTANCE_NAME}.conf" 2>/dev/null; then
       echo "script2"; return
     fi
@@ -325,13 +335,15 @@ show_header(){
   echo
   echo "1) Uninstall 'openvpn-cert-only-setup.sh' (Cert-only, no networking)"
   echo "2) Uninstall 'openvpn-cert-pass-installer.sh' (Cert + passphrase, IP forwarding)"
-  echo "3) Uninstall BOTH"
-  echo "4) Uninstall 'networking-setup.sh' (forwarding, NAT, persistence)"
-  echo "5) Toggle options"
-  echo "6) Detect and suggest"
-  echo "7) Exit"
+  echo "3) Uninstall 'networking-setup.sh' (forwarding, NAT, persistence)"
+  echo "4) Toggle options"
+  echo "5) Detect and suggest"
+  echo "6) Exit"
   echo
-  echo "Options: purge-packages=${PURGE_PACKAGES}, remove-user=${REMOVE_USER}, purge-networking-pkgs=${REMOVE_NETWORKING_PKGS}"
+  echo -e "Options:"
+  echo -e "  - purge OpenVPN packages      : $(state_color "$PURGE_PACKAGES")"
+  echo -e "  - remove 'openvpn' user       : $(state_color "$REMOVE_USER")"
+  echo -e "  - purge networking packages   : $(state_color "$REMOVE_NETWORKING_PKGS")"
   echo
 }
 
@@ -339,9 +351,9 @@ toggle_options_menu(){
   while true; do
     echo
     echo "----- Toggle Options -----"
-    echo "1) Toggle purge OpenVPN packages       (current: $PURGE_PACKAGES)"
-    echo "2) Toggle remove 'openvpn' user        (current: $REMOVE_USER)"
-    echo "3) Toggle purge networking packages    (current: $REMOVE_NETWORKING_PKGS)"
+    echo -e "1) Toggle purge OpenVPN packages     (current: $(state_color "$PURGE_PACKAGES"))"
+    echo -e "2) Toggle remove 'openvpn' user      (current: $(state_color "$REMOVE_USER"))"
+    echo -e "3) Toggle purge networking packages  (current: $(state_color "$REMOVE_NETWORKING_PKGS"))"
     echo "4) Back"
     read -r -p "Select: " o
     case "$o" in
@@ -361,22 +373,10 @@ confirm_and_run(){
   stop_disable_services
 
   case "$1" in
-    script1)
-      remove_script1_footprint
-      ;;
-    script2)
-      remove_script2_footprint
-      ;;
-    both)
-      remove_script2_footprint
-      remove_script1_footprint
-      ;;
-    networking)
-      remove_networking_setup
-      ;;
-    *)
-      warn "Unknown selection; no action."
-      ;;
+    script1)     remove_script1_footprint ;;
+    script2)     remove_script2_footprint ;;
+    networking)  remove_networking_setup ;;
+    *)           warn "Unknown selection; no action." ;;
   esac
 
   purge_packages_if_requested
@@ -400,29 +400,23 @@ while true; do
       confirm_and_run "script2"
       ;;
     3)
-      echo; echo "You chose: Uninstall BOTH"
-      confirm_and_run "both"
-      ;;
-    4)
       echo; echo "You chose: Uninstall 'networking-setup.sh'"
       confirm_and_run "networking"
       ;;
-    5)
+    4)
       toggle_options_menu
       ;;
-    6)
+    5)
       det="$(detect_install_type)"
       echo; echo "Detection result: $det"
       case "$det" in
-        script1) echo "Suggestion: choose option 1";;
-        script2) echo "Suggestion: choose option 2";;
-        both)    echo "Suggestion: choose option 3";;
-        networking) echo "Suggestion: choose option 4";;
-        *)       echo "No clear fingerprint found. Choose the option(s) you know were used, or run BOTH + NETWORKING.";;
-
+        script1)     echo "Suggestion: choose option 1";;
+        script2)     echo "Suggestion: choose option 2";;
+        networking)  echo "Suggestion: choose option 3";;
+        *)           echo "No clear fingerprint found. Pick the script you used (1/2) and/or 3 for networking.";;
       esac
       ;;
-    7)
+    6)
       echo "Bye."
       exit 0
       ;;

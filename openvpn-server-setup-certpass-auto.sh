@@ -159,13 +159,12 @@ build_ca(){
     echo ">>> Building the Certificate Authority (CA) with a PASSPHRASE"
     echo " - The CA private key will be encrypted."
     if $DAEMON_MODE; then
-      # Non-interactive: supply passphrase to Easy-RSA via env
-      EASYRSA_BATCH=1 EASYRSA_REQ_CN="OpenVPN-CA" EASYRSA_PASSOUT="pass:${CA_PASS_FLAG}" ./easyrsa build-ca
+      # Non-interactive: pass passphrase on CLI (more reliable than env-only)
+      ./easyrsa --batch --req-cn="OpenVPN-CA" --passout="pass:${CA_PASS_FLAG}" build-ca
     else
-      # Interactive: ask once and pass to Easy-RSA so you don't retype
       read -r -s -p "Enter CA key passphrase: " CA_PASSPHRASE; echo
       [ -n "$CA_PASSPHRASE" ] || die "CA key passphrase cannot be empty."
-      EASYRSA_BATCH=1 EASYRSA_REQ_CN="OpenVPN-CA" EASYRSA_PASSOUT="pass:${CA_PASSPHRASE}" ./easyrsa build-ca
+      ./easyrsa --batch --req-cn="OpenVPN-CA" --passout="pass:${CA_PASSPHRASE}" build-ca
     fi
   fi
 }
@@ -175,7 +174,6 @@ build_server(){
   if [ ! -f "$PKI_DIR/issued/${SERVER_NAME}.crt" ]; then
     echo
     echo ">>> Building the SERVER certificate with an encrypted private key"
-    # Use the same server passphrase for BOTH: key encryption and askpass (later)
     local spass
     if $DAEMON_MODE; then
       spass="$SERVER_PASS_FLAG"
@@ -184,9 +182,10 @@ build_server(){
       [ -n "$SERVER_KEY_PASSPHRASE" ] || die "Server key passphrase cannot be empty."
       spass="$SERVER_KEY_PASSPHRASE"
     fi
-    # Non-interactive Easy-RSA with passphrase
-    EASYRSA_BATCH=1 EASYRSA_REQ_CN="${SERVER_NAME}" EASYRSA_PASSOUT="pass:${spass}" ./easyrsa build-server-full "$SERVER_NAME"
-    # DH / CRL / ta.key
+
+    # Non-interactive build with CLI passout + CN
+    ./easyrsa --batch --req-cn="${SERVER_NAME}" --passout="pass:${spass}" build-server-full "$SERVER_NAME"
+
     [ -f "$PKI_DIR/dh.pem" ] || ./easyrsa gen-dh
     if [ ! -f "$CRL_FILE" ]; then
       ./easyrsa gen-crl
@@ -198,7 +197,8 @@ build_server(){
       chmod 600 "$TA_KEY"
     fi
     install -m 0644 "$CRL_FILE" /etc/openvpn/server/crl.pem
-    # Stash the passphrase for use by systemd later in set_askpass
+
+    # Stash the same passphrase for systemd askpass
     SERVER_PASSPHRASE_RUNTIME="$spass"
   fi
 }

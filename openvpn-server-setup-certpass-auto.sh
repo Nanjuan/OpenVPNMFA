@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# openvpn-cert-pass-installer.sh
+# openvpn-server-setup-certpass-auto.sh
 # OpenVPN server with certificate-only auth and passphrase-protected keys (no PAM)
 # Ubuntu/Debian and RHEL/Rocky/Alma supported. Requires systemd.
 #
 # Author: Nestor Torres
 # Created: October 2025
-# Version: 1
+# Version: 2 (adds robust non-interactive passphrase handling)
 set -euo pipefail
 
 # ---------------------- Constants ----------------------
 INSTANCE_NAME="server"  # fixed systemd instance and config filename (server.conf)
 
 # ---------------------- Defaults for prompts ----------------------
-PUBLIC_IP_DEFAULT="$(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}')"
+PUBLIC_IP_DEFAULT="$(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}' || true)"
 OVPN_PORT_DEFAULT="1194"
 OVPN_PROTO_DEFAULT="udp"
 OVPN_NET_DEFAULT="10.8.0.0"
@@ -29,7 +29,7 @@ need_root(){ [ "$(id -u )" -eq 0 ] || die "Run as root."; }
 usage() {
   cat <<'EOF'
 Usage:
-  openvpn-cert-pass-installer.sh [options]
+  openvpn-server-setup-certpass-auto.sh [options]
 
 General:
   -h, --help              Show this help and exit
@@ -37,7 +37,7 @@ General:
                           below must be supplied; otherwise the script exits.
 
 Install parameters (map 1:1 to interactive prompts):
-  --remote VALUE          Public IP or DNS for clients (e.g., 203.0.113.10 or vpn.example.com)
+  --remote VALUE          Public IP or DNS for clients (e.g., vpn.example.com)
   --port VALUE            OpenVPN port (e.g., 1194)
   --proto VALUE           OpenVPN protocol ("udp" or "tcp")
   --vpn-net VALUE         VPN network (e.g., 10.8.0.0)
@@ -53,10 +53,10 @@ Secrets (required in --daemon, entered once in interactive):
 
 Examples:
   # Interactive (prompts as before)
-  sudo ./openvpn-cert-pass-installer.sh
+  sudo ./openvpn-server-setup-certpass-auto.sh
 
   # Non-interactive (daemon mode) with auto-unlock on boot
-  sudo ./openvpn-cert-pass-installer.sh -d \
+  sudo ./openvpn-server-setup-certpass-auto.sh -d \
     --remote vpn.example.com --port 1194 --proto udp \
     --vpn-net 10.8.0.0 --vpn-mask 255.255.255.0 \
     --dns1 1.1.1.1 --dns2 8.8.8.8 --server-name server \
@@ -94,7 +94,7 @@ done
 
 require_flag() { local n="$1" v="$2"; [[ -n "$v" ]] || die "Missing required parameter in --daemon mode: $n"; }
 
-# ---------------------- Existing helpers (unchanged) ----------------------
+# ---------------------- Existing helpers (unchanged core) ----------------------
 detect_pkg(){
   if command -v apt-get >/dev/null 2>&1; then PKG="apt"; return; fi
   if command -v dnf >/dev/null 2>&1; then PKG="dnf"; return; fi
@@ -152,20 +152,55 @@ ensure_easyrsa(){
 
 init_pki(){ cd "$EASYRSA_DIR"; [ -d "$PKI_DIR" ] || ./easyrsa init-pki; }
 
+# ---------- Robust non-interactive helpers ----------
+supports_passout() { ./easyrsa --help 2>/dev/null | grep -q -- '--passout' || return 1; }
+ensure_expect() {
+  command -v expect >/dev/null 2>&1 && return 0
+  case "$PKG" in
+    apt)  DEBIAN_FRONTEND=noninteractive apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y expect ;;
+    dnf)  dnf install -y expect ;;
+    yum)  yum install -y expect ;;
+    *) die "Expect required but package manager unsupported." ;;
+  esac
+}
+
 build_ca(){
   cd "$EASYRSA_DIR"
   if [ ! -f "$PKI_DIR/private/ca.key" ]; then
     echo
     echo ">>> Building the Certificate Authority (CA) with a PASSPHRASE"
     echo " - The CA private key will be encrypted."
+    local capass=""
     if $DAEMON_MODE; then
-      # Non-interactive: pass passphrase on CLI (more reliable than env-only)
-      ./easyrsa --batch --req-cn="OpenVPN-CA" --passout="pass:${CA_PASS_FLAG}" build-ca
+      capass="${CA_PASS_FLAG}"
     else
-      read -r -s -p "Enter CA key passphrase: " CA_PASSPHRASE; echo
-      [ -n "$CA_PASSPHRASE" ] || die "CA key passphrase cannot be empty."
-      ./easyrsa --batch --req-cn="OpenVPN-CA" --passout="pass:${CA_PASSPHRASE}" build-ca
+      read -r -s -p "Enter CA key passphrase: " capass; echo
+      [ -n "$capass" ] || die "CA key passphrase cannot be empty."
     fi
+    # 1) Try CLI --passout (preferred)
+    if supports_passout; then
+      if ./easyrsa --batch --req-cn="OpenVPN-CA" --passout="pass:${capass}" build-ca; then
+        return
+      fi
+      echo "WARN: --passout path failed; trying env..." >&2
+    fi
+    # 2) Try env-based passout
+    if EASYRSA_BATCH=1 EASYRSA_REQ_CN="OpenVPN-CA" EASYRSA_PASSOUT="pass:${capass}" ./easyrsa build-ca; then
+      return
+    fi
+    echo "WARN: env path failed; falling back to expect..." >&2
+    # 3) Expect fallback (drive prompts)
+    ensure_expect
+    expect -c " \
+      set timeout -1; \
+      set capass \"$capass\"; \
+      spawn ./easyrsa build-ca; \
+      expect { \
+        -re {(?i)Enter New CA Key Passphrase:} { send -- \"$capass\r\"; exp_continue } \
+        -re {(?i)Re-Enter New CA Key Passphrase:} { send -- \"$capass\r\"; exp_continue } \
+        -re {(?i)Common Name.*:} { send -- \"OpenVPN-CA\r\"; exp_continue } \
+        eof \
+      }"
   fi
 }
 
@@ -174,7 +209,7 @@ build_server(){
   if [ ! -f "$PKI_DIR/issued/${SERVER_NAME}.crt" ]; then
     echo
     echo ">>> Building the SERVER certificate with an encrypted private key"
-    local spass
+    local spass=""
     if $DAEMON_MODE; then
       spass="$SERVER_PASS_FLAG"
     else
@@ -182,9 +217,43 @@ build_server(){
       [ -n "$SERVER_KEY_PASSPHRASE" ] || die "Server key passphrase cannot be empty."
       spass="$SERVER_KEY_PASSPHRASE"
     fi
-
-    # Non-interactive build with CLI passout + CN
-    ./easyrsa --batch --req-cn="${SERVER_NAME}" --passout="pass:${spass}" build-server-full "$SERVER_NAME"
+    # 1) Try CLI --passout
+    if supports_passout; then
+      if ./easyrsa --batch --req-cn="${SERVER_NAME}" --passout="pass:${spass}" build-server-full "$SERVER_NAME"; then
+        :
+      else
+        echo "WARN: --passout failed; trying env..." >&2
+        EASYRSA_BATCH=1 EASYRSA_REQ_CN="${SERVER_NAME}" EASYRSA_PASSOUT="pass:${spass}" ./easyrsa build-server-full "$SERVER_NAME" || {
+          echo "WARN: env failed; falling back to expect..." >&2
+          ensure_expect
+          expect -c " \
+            set timeout -1; \
+            set spass \"$spass\"; \
+            spawn ./easyrsa build-server-full \"$SERVER_NAME\"; \
+            expect { \
+              -re {(?i)Enter PEM pass phrase:} { send -- \"$spass\r\"; exp_continue } \
+              -re {(?i)Verifying - Enter PEM pass phrase:} { send -- \"$spass\r\"; exp_continue } \
+              -re {(?i)Common Name.*:} { send -- \"$SERVER_NAME\r\"; exp_continue } \
+              eof \
+            }"
+        }
+      fi
+    else
+      # Older easy-rsa without --passout
+      EASYRSA_BATCH=1 EASYRSA_REQ_CN="${SERVER_NAME}" EASYRSA_PASSOUT="pass:${spass}" ./easyrsa build-server-full "$SERVER_NAME" || {
+        ensure_expect
+        expect -c " \
+          set timeout -1; \
+          set spass \"$spass\"; \
+          spawn ./easyrsa build-server-full \"$SERVER_NAME\"; \
+          expect { \
+            -re {(?i)Enter PEM pass phrase:} { send -- \"$spass\r\"; exp_continue } \
+            -re {(?i)Verifying - Enter PEM pass phrase:} { send -- \"$spass\r\"; exp_continue } \
+            -re {(?i)Common Name.*:} { send -- \"$SERVER_NAME\r\"; exp_continue } \
+            eof \
+          }"
+      }
+    fi
 
     [ -f "$PKI_DIR/dh.pem" ] || ./easyrsa gen-dh
     if [ ! -f "$CRL_FILE" ]; then
@@ -198,7 +267,7 @@ build_server(){
     fi
     install -m 0644 "$CRL_FILE" /etc/openvpn/server/crl.pem
 
-    # Stash the same passphrase for systemd askpass
+    # Save passphrase for askpass (used again)
     SERVER_PASSPHRASE_RUNTIME="$spass"
   fi
 }
@@ -249,14 +318,12 @@ set_askpass(){
   mkdir -p "$(dirname "$ASKPASS_FILE")"
   local spass=""
   if $DAEMON_MODE; then
-    # Use daemon-provided value (already required)
     spass="$SERVER_PASS_FLAG"
   else
-    # Reuse the SAME passphrase typed for the server key generation above
+    # reuse previously entered pass if present, fallback to prompt
     if [[ -n "${SERVER_PASSPHRASE_RUNTIME:-}" ]]; then
       spass="$SERVER_PASSPHRASE_RUNTIME"
     else
-      # Fallback (shouldn't happen): prompt once
       read -r -s -p "Re-enter SERVER key passphrase for askpass: " tmp; echo
       spass="$tmp"
     fi
@@ -266,7 +333,6 @@ set_askpass(){
     printf '%s\n' "$spass" > "$ASKPASS_FILE"
     chmod 600 "$ASKPASS_FILE"
   else
-    # If somehow empty, remove askpass line to avoid a stuck service
     sed -i '/^askpass /d' "$SERVER_CONF"
     echo "No server passphrase available; askpass removed. Service may not auto-start."
   fi
@@ -387,11 +453,20 @@ if is_service_running; then
     show_menu
     read -r -p "Select: " choice
     case "$choice" in
-      1) read -r -p "Client name (CN) username: " CN; [ -z "$CN" ] && { echo "No CN provided."; continue; }
-         make_client "$CN"
-         RIP="$(detect_public_ip)"; RPORT="$(get_server_port)"; RPROTO="$(get_server_proto)"
-         inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO" ;;
-      2) read -r -p "Client name (CN) username to revoke: " CN; [ -z "$CN" ] && { echo "No CN provided."; continue; }; revoke_client "$CN" ;;
+      1)
+        read -r -p "Client name (CN) username: " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        make_client "$CN"
+        RIP="$(detect_public_ip)"
+        RPORT="$(get_server_port)"
+        RPROTO="$(get_server_proto)"
+        inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
+        ;;
+      2)
+        read -r -p "Client name (CN) username to revoke: " CN
+        [ -z "$CN" ] && { echo "No CN provided."; continue; }
+        revoke_client "$CN"
+        ;;
       3) list_clients ;;
       4) systemctl restart "openvpn-server@${INSTANCE_NAME}"; systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
       5) systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
@@ -428,7 +503,7 @@ if $DAEMON_MODE; then
   SERVER_NAME="$SERVER_NAME_FLAG"
 else
   echo "===== OpenVPN Setup ====="
-  PROFILE_REMOTE_IP="$(prompt_default "Public IP or DNS for clients" "$PUBLIC_IP_DEFAULT")"
+  PROFILE_REMOTE_IP="$(prompt_default "Public IP or DNS for clients" "${PUBLIC_IP_DEFAULT:-$(hostname -I | awk '{print $1}')}" )"
   OVPN_PORT="$(prompt_default "OpenVPN port" "$OVPN_PORT_DEFAULT")"
   OVPN_PROTO="$(prompt_default "OpenVPN protocol (udp/tcp)" "$OVPN_PROTO_DEFAULT")"
   OVPN_NET="$(prompt_default "VPN network" "$OVPN_NET_DEFAULT")"
@@ -460,11 +535,20 @@ while true; do
   show_menu
   read -r -p "Select: " choice
   case "$choice" in
-    1) read -r -p "Client name (CN) username: " CN; [ -z "$CN" ] && { echo "No CN provided."; continue; }
-       make_client "$CN"
-       RIP="$(detect_public_ip)"; RPORT="$(get_server_port)"; RPROTO="$(get_server_proto)"
-       inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO" ;;
-    2) read -r -p "Client name (CN) username to revoke: " CN; [ -z "$CN" ] && { echo "No CN provided."; continue; }; revoke_client "$CN" ;;
+    1)
+      read -r -p "Client name (CN) username: " CN
+      [ -z "$CN" ] && { echo "No CN provided."; continue; }
+      make_client "$CN"
+      RIP="$(detect_public_ip)"
+      RPORT="$(get_server_port)"
+      RPROTO="$(get_server_proto)"
+      inline_ovpn "$CN" "$RIP" "$RPORT" "$RPROTO"
+      ;;
+    2)
+      read -r -p "Client name (CN) username to revoke: " CN
+      [ -z "$CN" ] && { echo "No CN provided."; continue; }
+      revoke_client "$CN"
+      ;;
     3) list_clients ;;
     4) systemctl restart "openvpn-server@${INSTANCE_NAME}"; systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
     5) systemctl --no-pager --full status "openvpn-server@${INSTANCE_NAME}" || true ;;
